@@ -83,6 +83,7 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
     var pedido by remember { mutableStateOf("") }
     var pedidoRespondido by remember { mutableStateOf("") }   // a resposta só vale para o texto que a gerou
     var resposta by remember { mutableStateOf<Assistente.Resposta?>(null) }
+    var perguntaAberta by remember { mutableStateOf<Pair<String, String>?>(null) }   // (pedido original, pergunta do assistente)
     var bloqueio by remember { mutableStateOf<Pair<String, String>?>(null) }   // (mensagem, ação: "credito" | "planos")
     var recarga by remember { mutableStateOf<Assistente.Recarga?>(null) }
     var voltarPara by remember { mutableStateOf(Etapa.PEDIDO) }
@@ -142,7 +143,7 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                     }
                     Texto2("Exemplos: \"marca dentista quinta 15h\", \"academia toda terça das 6 às 7\", \"joga o teclado de hoje pra 21h\".")
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = pedido, onValueChange = { pedido = it; if (it != pedidoRespondido) resposta = null }, placeholder = { Text("O que você quer marcar ou mudar?") }, modifier = Modifier.weight(1f), maxLines = 3)
+                        OutlinedTextField(value = pedido, onValueChange = { pedido = it; if (it != pedidoRespondido && perguntaAberta == null) resposta = null }, placeholder = { Text(if (perguntaAberta != null) "Responda aqui (ex.: 09:30)" else "O que você quer marcar ou mudar?") }, modifier = Modifier.weight(1f), maxLines = 3)
                         IconButton(onClick = {
                             val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply { putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Diga o que quer marcar ou mudar") }
                             runCatching { ouvir.launch(i) }.onFailure { erro = "Este aparelho não tem reconhecimento de voz disponível." }
@@ -161,7 +162,7 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                         }
                     }
                     val resp = resposta
-                    if (resp != null && pedido == pedidoRespondido) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Papel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (resp != null && (pedido == pedidoRespondido || perguntaAberta != null)) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Papel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (resp.resumo.isNotEmpty()) Text(resp.resumo, color = Tinta, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
                         resp.acoes.forEach { a -> Text("• " + Assistente.descreve(a, blocos), color = Tinta, fontSize = 14.sp, lineHeight = 20.sp) }
                         resp.pergunta?.let { Text(it, color = Acento, fontSize = 14.sp, lineHeight = 20.sp) }
@@ -179,8 +180,11 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                             if (pedido.isBlank()) return@Button
                             escopo.launch { ocupado = true; erro = null; bloqueio = null; resposta = null
                                 val texto = pedido.trim()
-                                runCatching { Assistente.pedir(ctx, email, texto, hoje, seg, blocos, if (usaChave) chave else null) }
-                                    .onSuccess { r -> resposta = r; pedidoRespondido = pedido; r.conta?.let { conta = it } }
+                                val ant = perguntaAberta
+                                runCatching { Assistente.pedir(ctx, email, texto, hoje, seg, blocos, if (usaChave) chave else null, ant) }
+                                    .onSuccess { r -> resposta = r; pedidoRespondido = pedido; r.conta?.let { conta = it }
+                                        perguntaAberta = if (r.pergunta != null && r.acoes.isEmpty()) ((ant?.first ?: texto) + (if (ant != null) " / " + texto else "")) to r.pergunta else null
+                                        if (r.pergunta != null && r.acoes.isEmpty()) pedido = "" }
                                     .onFailure { e ->
                                         val f = e as? Assistente.Falha
                                         when (f?.codigo) {
@@ -192,7 +196,7 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                                         f?.corpo?.optJSONObject("conta")?.let { runCatching { Assistente.conta(ctx, email) }.onSuccess { c -> conta = c } }
                                     }
                                 ocupado = false }
-                        }, enabled = !ocupado && pedido.isNotBlank(), modifier = Modifier.height(48.dp)) { Text(if (c?.plano == "pago" && !usaChave) "Entender · ${reais(c.preco)}" else "Entender") }
+                        }, enabled = !ocupado && pedido.isNotBlank(), modifier = Modifier.height(48.dp)) { Text((if (perguntaAberta != null) "Responder" else "Entender") + (if (c?.plano == "pago" && !usaChave) " · ${reais(c.preco)}" else "")) }
                     }
                     if (c?.plano == "pago" && !usaChave) Texto2("Cobramos quando a interpretação fica pronta, mesmo se você não aplicar as mudanças.")
                 }

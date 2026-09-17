@@ -80,9 +80,10 @@ object Assistente {
         return lista to conta(j.optJSONObject("conta"))
     }
 
-    suspend fun pedir(ctx: Context, email: String, pedido: String, hoje: LocalDate, seg: LocalDate, blocos: List<Bloco>, chave: String?): Resposta {
+    suspend fun pedir(ctx: Context, email: String, pedido: String, hoje: LocalDate, seg: LocalDate, blocos: List<Bloco>, chave: String?, anterior: Pair<String, String>? = null): Resposta {
         val corpo = JSONObject().apply {
             put("pedido", pedido); put("hoje", hoje.toString()); put("seg", seg.toString())
+            anterior?.let { (ped, perg) -> put("anterior", JSONObject().put("pedido", ped).put("pergunta", perg)) }
             if (!chave.isNullOrBlank()) put("chave", chave)
             put("blocos", JSONArray().apply { blocos.forEach { b -> put(JSONObject().apply { put("id", b.id); put("dia", b.dia); put("ini", hhmm(b.ini)); put("fim", hhmm(b.fim)); put("cat", b.cat.chave); put("rot", b.rot); put("unico", b.unico) }) } })
         }
