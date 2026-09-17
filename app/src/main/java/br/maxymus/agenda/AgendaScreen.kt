@@ -3,6 +3,7 @@ package br.maxymus.agenda
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,7 +103,7 @@ private data class Edicao(val base: Bloco?, val dia: Int, val ini: Int, val fim:
 /** Estado da comunicação com o Google, separado por tipo (Astra P0). */
 private sealed class Rede { object Ocioso : Rede(); data class Carregando(val texto: String) : Rede(); data class Erro(val texto: String, val autorizar: Intent? = null) : Rede() }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     val contexto = LocalContext.current
