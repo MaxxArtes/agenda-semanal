@@ -123,6 +123,12 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     var edicao by remember { mutableStateOf<Edicao?>(null) }
     var menu by remember { mutableStateOf(false) }
     var assistenteAberto by remember { mutableStateOf(false) }
+    var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
+    var conferindo by remember { mutableStateOf(false) }
+    val instalada = remember { Atualizador.versaoInstalada(contexto) }
+    LaunchedEffect(Unit) { val v = Atualizador.consultar(); if (v != null && v.codigo > instalada.second) novaVersao = v }
+    val movel = LocalConfiguration.current.screenWidthDp < 600
+    val ocupado = false
     fun sel() = blocos.firstOrNull { it.id == selecionado }
     fun dataDe(dia: Int): LocalDate = seg.plusDays(dia.toLong())
     fun rotuloAlcance(b: Bloco?, escopo: String = alcance): String = when {
