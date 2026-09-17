@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.agenda"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
     // Mesma chave do camera-estudo (secrets do repo): o cadastro OAuth do Google fica preso à SHA-1 dela.
     val ksCaminho = System.getenv("AGENDA_KEYSTORE")

@@ -120,6 +120,10 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     var diaMovel by remember { mutableStateOf(hoje.dayOfWeek.value - 1) }
     var edicao by remember { mutableStateOf<Edicao?>(null) }
     var menu by remember { mutableStateOf(false) }
+    var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
+    var conferindo by remember { mutableStateOf(false) }
+    val instalada = remember { Atualizador.versaoInstalada(contexto) }
+    LaunchedEffect(Unit) { val v = Atualizador.consultar(); if (v != null && v.codigo > instalada.second) novaVersao = v }
     val movel = LocalConfiguration.current.screenWidthDp < 600
     val ocupado = rede is Rede.Carregando
 
@@ -176,6 +180,13 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções", tint = Tinta2) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text(conta, fontSize = 12.sp, color = Tinta2) }, onClick = { menu = false }, enabled = false)
+                    DropdownMenuItem(text = { Text("Versão ${instalada.first}" + (novaVersao?.let { " · nova: ${it.nome}" } ?: "")) }, onClick = { menu = false }, enabled = false)
+                    DropdownMenuItem(text = { Text(if (novaVersao != null) "Atualizar para ${novaVersao!!.nome}" else if (conferindo) "Conferindo…" else "Conferir atualização") }, onClick = {
+                        val nv = novaVersao
+                        if (nv != null) { menu = false; Atualizador.baixarEInstalar(contexto, nv) }
+                        else escopo.launch { conferindo = true; val v = Atualizador.consultar(); conferindo = false
+                            if (v == null) rede = Rede.Erro("Não consegui consultar o canal de atualização.") else if (v.codigo > instalada.second) novaVersao = v else { menu = false; rede = Rede.Ocioso; android.widget.Toast.makeText(contexto, "Você já está na versão mais nova (${instalada.first}).", android.widget.Toast.LENGTH_SHORT).show() } }
+                    })
                     DropdownMenuItem(text = { Text("Sair") }, onClick = { menu = false; sair() })
                 }
             }
@@ -203,6 +214,10 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                 }
             }
         }
+        novaVersao?.let { nv -> Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(Elevada).padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Versão ${nv.nome} disponível" + (nv.mudou.firstOrNull()?.let { ": $it" } ?: ""), color = Tinta, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            TextButton(onClick = { Atualizador.baixarEInstalar(contexto, nv) }) { Text("Atualizar", color = Acento) }
+            TextButton(onClick = { novaVersao = null }) { Text("Depois", color = Tinta2) } } }
         // ---- faixa de estado (carregando / erro / vazio) ----
         val r = rede
         when {
