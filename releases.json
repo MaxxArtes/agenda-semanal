@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.7",
+      "build": 10,
+      "tag": "v0.7-build10",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.7-build10.apk",
+      "mudou": [
+        "Restaura estado do atualizador e 'movel' removidos por engano"
+      ]
+    },
+    {
       "versao": "0.6",
       "build": 8,
       "tag": "v0.6-build8",
@@ -55,11 +64,11 @@
       ]
     }
   ],
-  "versionName": "0.6",
-  "versionCode": 6,
-  "build": 8,
+  "versionName": "0.7",
+  "versionCode": 7,
+  "build": 10,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.6-build8.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.7-build10.apk",
   "github": "https://github.com/MaxxArtes/agenda-semanal/releases/download/ultimo/agenda-semanal.apk",
-  "publicadoEm": "2026-09-17T23:08:52Z"
+  "publicadoEm": "2026-09-17T23:29:24Z"
 }
