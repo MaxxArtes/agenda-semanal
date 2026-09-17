@@ -52,6 +52,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +72,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -125,7 +130,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     val instalada = remember { Atualizador.versaoInstalada(contexto) }
     LaunchedEffect(Unit) { val v = Atualizador.consultar(); if (v != null && v.codigo > instalada.second) novaVersao = v }
     val movel = LocalConfiguration.current.screenWidthDp < 600
-    val ocupado = rede is Rede.Carregando
+    val ocupado = false
 
     fun sel() = blocos.firstOrNull { it.id == selecionado }
     fun dataDe(dia: Int): LocalDate = seg.plusDays(dia.toLong())
@@ -135,41 +140,62 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         else -> "Série inteira"
     }
 
-    /** Roda uma escrita no Google e recarrega a semana; distingue falha da escrita e falha da releitura. */
-    fun executa(texto: String, escrita: (suspend () -> Unit)? = null) {
+    /**
+     * Lê a semana do Google. A tela nunca espera escrita: mudanças aplicam na hora e vão para a Fila em
+     * segundo plano (dono, 17/09). Releitura só ao trocar de semana, ao voltar para o app ou quando a fila
+     * esvazia depois de algo que a tela não sabe recompor (voltar à rotina).
+     */
+    var ultimaLeitura by remember { mutableStateOf(0L) }
+    var precisaReler by remember { mutableStateOf(false) }
+    fun carregar(silencioso: Boolean) {
         escopo.launch {
-            rede = Rede.Carregando(texto)
-            var escreveu = false
+            if (!silencioso) rede = Rede.Carregando("Carregando semana…")
             try {
-                withContext(Dispatchers.IO) { escrita?.invoke(); escreveu = true; blocos = repo.semana(seg) }
-                carregou = true; rede = Rede.Ocioso
+                val lidos = withContext(Dispatchers.IO) { repo.semana(seg) }
+                blocos = lidos; carregou = true; ultimaLeitura = System.currentTimeMillis(); precisaReler = false
+                if (rede is Rede.Carregando) rede = Rede.Ocioso
             } catch (e: UserRecoverableAuthIOException) { rede = Rede.Erro("Precisa autorizar o acesso ao Google Agenda.", e.intent) }
-            catch (e: Exception) {
-                rede = Rede.Erro(if (escrita != null && escreveu) "Alteração enviada; não foi possível atualizar a tela." else if (escrita != null) "Não foi possível salvar: " + GoogleAgenda.mensagem(e) else "Não foi possível carregar: " + GoogleAgenda.mensagem(e))
-            }
+            catch (e: Exception) { if (!silencioso || !carregou) rede = Rede.Erro("Não foi possível carregar: " + GoogleAgenda.mensagem(e)) }
         }
     }
-    LaunchedEffect(seg) { selecionado = null; carregou = false; executa("Carregando semana…") }
+    fun executa(texto: String) { carregar(silencioso = false) }
+    LaunchedEffect(seg) { selecionado = null; carregou = false; carregar(silencioso = false) }
+    val fila by Fila.estado.collectAsState()
+    // fila esvaziou: se algo ficou por reler, relê em silêncio
+    LaunchedEffect(fila.pendentes, fila.erro) { if (fila.pendentes == 0 && fila.erro == null && precisaReler) carregar(silencioso = true) }
+    // voltou para o app: relê em silêncio se a última leitura tem mais de 2 minutos e não há escrita pendente
+    val dono = LocalLifecycleOwner.current
+    DisposableEffect(dono) {
+        val obs = LifecycleEventObserver { _, ev -> if (ev == Lifecycle.Event.ON_RESUME && carregou && fila.pendentes == 0 && System.currentTimeMillis() - ultimaLeitura > 120_000) carregar(silencioso = true) }
+        dono.lifecycle.addObserver(obs); onDispose { dono.lifecycle.removeObserver(obs) }
+    }
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(60_000); val h = LocalDate.now(FUSO); if (h != hoje) hoje = h } }
 
     // ---- mudanças com alcance ----
     fun aplicar(b: Bloco, dia: Int, ini: Int, fim: Int, cat: Categoria = b.cat, rot: String = b.rot, escopoMudanca: String = alcance) {
         val data = dataDe(dia)
-        executa("Salvando…") {
+        val soDia = b.serie != null && (b.unico || escopoMudanca == "dia")
+        blocos = blocos.map { if (it.id == b.id) it.copy(data = data, ini = ini, fim = fim, cat = cat, rot = rot, unico = it.unico || soDia) else it }
+        Fila.enfileirar("alterar $rot") {
             when {
-                b.serie == null -> repo.alterarUnico(b.id, rot, cat, data, ini, fim)
-                b.unico || escopoMudanca == "dia" -> repo.alterarOcorrencia(b.id, rot, cat, data, ini, fim)
-                else -> repo.alterarSerie(b.serie, rot, cat, dia, ini, fim)
+                b.serie == null -> repo.alterarUnico(Ids.real(b.id), rot, cat, data, ini, fim)
+                soDia -> repo.alterarOcorrencia(Ids.real(b.id), rot, cat, data, ini, fim)
+                else -> repo.alterarSerie(Ids.real(b.serie), rot, cat, dia, ini, fim)
             }
         }
+        if (b.serie != null && !soDia) precisaReler = true   // a série mudou: as ocorrências da semana precisam vir do Google
     }
     fun criar(dia: Int, ini: Int, fim: Int, cat: Categoria, rot: String, escopoMudanca: String = alcance) {
-        val data = dataDe(dia)
-        executa("Criando…") { if (escopoMudanca == "dia") repo.criarUnico(rot, cat, data, ini, fim) else repo.criarSerie(rot, cat, data, ini, fim) }
+        val data = dataDe(dia); val tmp = Ids.temporario(); val rotina = escopoMudanca != "dia"
+        blocos = blocos + Bloco(tmp, if (rotina) tmp else null, data, ini, fim, cat, rot, unico = !rotina)
+        Fila.enfileirar("criar $rot") { val real = if (rotina) repo.criarSerie(rot, cat, data, ini, fim) else repo.criarUnico(rot, cat, data, ini, fim); Ids.registra(tmp, real) }
+        if (rotina) precisaReler = true   // a ocorrência de verdade tem id próprio, diferente do id da série
     }
     fun remover(b: Bloco, escopoMudanca: String = alcance) {
         selecionado = null
-        executa("Removendo…") { if (b.serie != null && !b.unico && escopoMudanca == "semana") repo.remover(b.serie) else repo.remover(b.id) }
+        val serieInteira = b.serie != null && !b.unico && escopoMudanca == "semana"
+        blocos = if (serieInteira) blocos.filter { it.serie != b.serie } else blocos.filter { it.id != b.id }
+        Fila.enfileirar("remover ${b.rot}") { if (serieInteira) repo.remover(Ids.real(b.serie!!)) else repo.remover(Ids.real(b.id)) }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Fundo).statusBarsPadding()) {
@@ -218,6 +244,15 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
             Text("Versão ${nv.nome} disponível" + (nv.mudou.firstOrNull()?.let { ": $it" } ?: ""), color = Tinta, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             TextButton(onClick = { Atualizador.baixarEInstalar(contexto, nv) }) { Text("Atualizar", color = Acento) }
             TextButton(onClick = { novaVersao = null }) { Text("Depois", color = Tinta2) } } }
+        // ---- fila de envio ao Google ----
+        val fe = fila.erro
+        if (fe != null) Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(Elevada).padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(fe, color = Tinta, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (fila.autorizar != null) TextButton(onClick = { autorizar(fila.autorizar!!) }) { Text("Autorizar", color = Acento) }
+            else { TextButton(onClick = { Fila.tentarDeNovo() }) { Text("Tentar", color = Acento) }; TextButton(onClick = { Fila.descartarFalha(); carregar(silencioso = true) }) { Text("Descartar", color = Perigo) } }
+        } else if (fila.pendentes > 0) Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = Tinta2)
+            Text(if (fila.pendentes == 1) "Enviando 1 mudança ao Google…" else "Enviando ${fila.pendentes} mudanças ao Google…", color = Tinta2, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp)) }
         // ---- faixa de estado (carregando / erro / vazio) ----
         val r = rede
         when {
@@ -236,7 +271,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                 aoTocarVazio = { dia, m ->
                     val c = copiado
                     when {
-                        !carregou || ocupado -> {}
+                        !carregou -> {}
                         c != null -> criar(dia, m.coerceAtMost(FIM - c.duracao), (m + c.duracao).coerceAtMost(FIM), c.cat, c.rot)
                         selecionado != null -> selecionado = null
                         else -> edicao = Edicao(null, dia, m, (m + 60).coerceAtMost(FIM), Categoria.OUTRO, "")
@@ -265,7 +300,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         val cabe = s.fim + s.duracao <= FIM
                         OutlinedButton(onClick = { criar(s.dia, s.fim, s.fim + s.duracao, s.cat, s.rot) }, enabled = cabe && !ocupado, modifier = Modifier.height(48.dp)) { Text(if (cabe) "Duplicar" else "Duplicar (não cabe)") }
                         OutlinedButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot) }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Editar") }
-                        if (s.unico && s.serie != null) OutlinedButton(onClick = { selecionado = null; executa("Voltando à rotina…") { repo.voltarRotina(s) } }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Voltar à rotina") }
+                        if (s.unico && s.serie != null) OutlinedButton(onClick = { selecionado = null; precisaReler = true; Fila.enfileirar("voltar ${s.rot} à rotina") { repo.voltarRotina(s.copy(id = Ids.real(s.id), serie = Ids.real(s.serie!!))) } }, modifier = Modifier.height(48.dp)) { Text("Voltar à rotina") }
                         OutlinedButton(onClick = { selecionado = null }, modifier = Modifier.height(48.dp)) { Text("Desmarcar") }
                     }
                 }
