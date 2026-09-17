@@ -11,8 +11,10 @@ android {
         applicationId = "br.maxymus.agenda"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 5
+        versionName = "0.5"
+        // token do assistente vem do CI (secret AGENDA_ASSISTENTE_TOKEN); sem ele o campo do assistente fica escondido
+        buildConfigField("String", "ASSISTENTE_TOKEN", "\"" + (System.getenv("AGENDA_ASSISTENTE_TOKEN") ?: "") + "\"")
     }
     // Mesma chave do camera-estudo (secrets do repo): o cadastro OAuth do Google fica preso à SHA-1 dela.
     val ksCaminho = System.getenv("AGENDA_KEYSTORE")
@@ -33,7 +35,7 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += listOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/DEPENDENCIES", "META-INF/INDEX.LIST") } }
 }
 
