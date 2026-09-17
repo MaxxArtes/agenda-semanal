@@ -14,11 +14,18 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
-      - name: Restaura keystore (assinatura fixa)
+      - name: Restaura keystore (assinatura fixa; sem o secret, sai assinado com a chave de debug)
+        env: { KS_B64: "${{ secrets.SIGNING_KEY_BASE64 }}", KS_SENHA: "${{ secrets.SIGNING_KEY_PASSWORD }}" }
         run: |
-          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/agenda.jks"
-          echo "AGENDA_KEYSTORE=$RUNNER_TEMP/agenda.jks" >> "$GITHUB_ENV"
-          echo "AGENDA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/agenda.jks"
+            echo "AGENDA_KEYSTORE=$RUNNER_TEMP/agenda.jks" >> "$GITHUB_ENV"
+            echo "AGENDA_KEYSTORE_SENHA=$KS_SENHA" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${{ secrets.R2_ACCOUNT_ID }}" ]; then echo "R2_OK=1" >> "$GITHUB_ENV"; fi
+          if [ -z "$KS_B64" ]; then
+            echo "::warning::SIGNING_KEY_BASE64 ausente: APK assinado com chave de debug (login Google não vai funcionar nele)"
+          fi
       - name: Build (release assinado, compactado com R8)
         run: gradle :app:assembleRelease --no-daemon
       # Artifact é best-effort (cota de storage já estourou no passado); a entrega de verdade é o
@@ -41,6 +48,7 @@ jobs:
             --title "Última build" --notes "Sempre o APK mais recente. Histórico completo nas releases numeradas." || true
           gh release upload ultimo agenda-semanal.apk --repo "$GITHUB_REPOSITORY" --clobber
       - name: Publica no R2 (link público fixo) e atualiza releases.json — igual ao canal do pitanga
+        if: ${{ env.R2_OK == '1' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
