@@ -1,10 +1,6 @@
 package br.maxymus.agenda
 
 import android.content.Intent
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -99,10 +95,6 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-// Sistema visual (Astra, 17/09)
-private val Fundo = Color(0xFF10141C); private val Papel = Color(0xFF181F2B); private val Elevada = Color(0xFF232D3D)
-private val Linha = Color(0xFF283345); private val LinhaForte = Color(0xFF43516A)
-private val Tinta = Color(0xFFF3F5FA); private val Tinta2 = Color(0xFFB5C0D3); private val Acento = Color(0xFF8AA4FF); private val Perigo = Color(0xFFFF707B)
 private val FUSO: ZoneId = ZoneId.of("America/Cuiaba")
 private val fmtData: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 private val fmtCurta: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", Locale("pt", "BR"))
@@ -130,30 +122,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     var diaMovel by remember { mutableStateOf(hoje.dayOfWeek.value - 1) }
     var edicao by remember { mutableStateOf<Edicao?>(null) }
     var menu by remember { mutableStateOf(false) }
-    // assistente por linguagem
     var assistenteAberto by remember { mutableStateOf(false) }
-    var pedido by remember { mutableStateOf("") }
-    var respostaAssistente by remember { mutableStateOf<Assistente.Resposta?>(null) }
-    var assistenteOcupado by remember { mutableStateOf(false) }
-    var assistenteErro by remember { mutableStateOf<String?>(null) }
-    var chaveDialogo by remember { mutableStateOf(false) }
-    val ouvir = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        val falas = r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-        falas?.firstOrNull()?.let { pedido = it }
-    }
-    fun escutar() {
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Diga o que quer marcar ou mudar")
-        }
-        runCatching { ouvir.launch(i) }.onFailure { assistenteErro = "Este aparelho não tem reconhecimento de voz disponível." }
-    }
-    var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
-    var conferindo by remember { mutableStateOf(false) }
-    val instalada = remember { Atualizador.versaoInstalada(contexto) }
-    LaunchedEffect(Unit) { val v = Atualizador.consultar(); if (v != null && v.codigo > instalada.second) novaVersao = v }
-    val movel = LocalConfiguration.current.screenWidthDp < 600
-    val ocupado = false
-
     fun sel() = blocos.firstOrNull { it.id == selecionado }
     fun dataDe(dia: Int): LocalDate = seg.plusDays(dia.toLong())
     fun rotuloAlcance(b: Bloco?, escopo: String = alcance): String = when {
@@ -235,7 +204,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         else escopo.launch { conferindo = true; val v = Atualizador.consultar(); conferindo = false
                             if (v == null) rede = Rede.Erro("Não consegui consultar o canal de atualização.") else if (v.codigo > instalada.second) novaVersao = v else { menu = false; rede = Rede.Ocioso; android.widget.Toast.makeText(contexto, "Você já está na versão mais nova (${instalada.first}).", android.widget.Toast.LENGTH_SHORT).show() } }
                     })
-                    if (Assistente.disponivel) DropdownMenuItem(text = { Text(if (Assistente.chavePropria(contexto).isNotEmpty()) "Assistente: usando minha chave" else "Assistente: usar minha chave do OpenRouter") }, onClick = { menu = false; chaveDialogo = true })
+                    if (Assistente.disponivel) DropdownMenuItem(text = { Text("Assistente: plano, saldo e histórico") }, onClick = { menu = false; assistenteAberto = true })
                     DropdownMenuItem(text = { Text("Sair") }, onClick = { menu = false; sair() })
                 }
             }
@@ -329,69 +298,25 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                 }
                 else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { edicao = Edicao(null, if (movel) diaMovel else hoje.dayOfWeek.value - 1, 8 * 60, 9 * 60, Categoria.OUTRO, "") }, enabled = carregou && !ocupado, modifier = Modifier.weight(1f).height(48.dp)) { Text("+ Adicionar") }
-                    if (Assistente.disponivel) OutlinedButton(onClick = { assistenteAberto = true; respostaAssistente = null; assistenteErro = null }, enabled = carregou, modifier = Modifier.weight(1f).height(48.dp)) {
+                    if (Assistente.disponivel) OutlinedButton(onClick = { assistenteAberto = true }, enabled = carregou, modifier = Modifier.weight(1f).height(48.dp)) {
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Pedir") }
                 }
             }
         }
     }
 
-    // ---- assistente ----
-    if (assistenteAberto) {
-        val folha = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        fun aplicarAcoes(resp: Assistente.Resposta) {
-            for (a in resp.acoes) {
-                val alvo = a.id?.let { id -> blocos.firstOrNull { it.id == id } }
-                when (a.tipo) {
-                    "criar" -> if (a.dia != null && a.ini != null) criar(a.dia.coerceIn(0, 6), a.ini, (a.fim ?: (a.ini + 60)).coerceIn(a.ini + PASSO, FIM), a.cat ?: Categoria.OUTRO, a.rot ?: "Compromisso", a.alcance)
-                    "mover" -> if (alvo != null && a.ini != null) { val ini = a.ini.coerceIn(INICIO, FIM - alvo.duracao); aplicar(alvo, a.dia?.coerceIn(0, 6) ?: alvo.dia, ini, ini + alvo.duracao, escopoMudanca = a.alcance) }
-                    "alterar" -> if (alvo != null) { val ini = a.ini ?: alvo.ini; val fim = a.fim ?: (if (a.ini != null) ini + alvo.duracao else alvo.fim); if (fim > ini) aplicar(alvo, a.dia?.coerceIn(0, 6) ?: alvo.dia, ini, fim.coerceAtMost(FIM), a.cat ?: alvo.cat, a.rot ?: alvo.rot, a.alcance) }
-                    "remover" -> if (alvo != null) remover(alvo, a.alcance)
-                }
+    // ---- assistente (folha própria: plano, pedido, recarga, histórico) ----
+    if (assistenteAberto) AssistenteSheet(email = conta, hoje = hoje, seg = seg, blocos = blocos, aoFechar = { assistenteAberto = false }, aoAplicar = { resp ->
+        for (a in resp.acoes) {
+            val alvo = a.id?.let { id -> blocos.firstOrNull { it.id == id } }
+            when (a.tipo) {
+                "criar" -> if (a.dia != null && a.ini != null) criar(a.dia.coerceIn(0, 6), a.ini, (a.fim ?: (a.ini + 60)).coerceIn(a.ini + PASSO, FIM), a.cat ?: Categoria.OUTRO, a.rot ?: "Compromisso", a.alcance)
+                "mover" -> if (alvo != null && a.ini != null) { val ini = a.ini.coerceIn(INICIO, FIM - alvo.duracao); aplicar(alvo, a.dia?.coerceIn(0, 6) ?: alvo.dia, ini, ini + alvo.duracao, escopoMudanca = a.alcance) }
+                "alterar" -> if (alvo != null) { val ini = a.ini ?: alvo.ini; val fim = a.fim ?: (if (a.ini != null) ini + alvo.duracao else alvo.fim); if (fim > ini) aplicar(alvo, a.dia?.coerceIn(0, 6) ?: alvo.dia, ini, fim.coerceAtMost(FIM), a.cat ?: alvo.cat, a.rot ?: alvo.rot, a.alcance) }
+                "remover" -> if (alvo != null) remover(alvo, a.alcance)
             }
         }
-        ModalBottomSheet(onDismissRequest = { assistenteAberto = false }, sheetState = folha, containerColor = Elevada, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
-            Column(modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp).align(Alignment.CenterHorizontally).padding(horizontal = 20.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Pedir ao assistente", color = Tinta, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold)
-                Text("Exemplos: \"marca dentista quinta 15h\", \"academia toda terça das 6 às 7\", \"joga o teclado de hoje pra 21h\", \"tira o estudo de amanhã\".", color = Tinta2, fontSize = 12.sp)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = pedido, onValueChange = { pedido = it }, placeholder = { Text("O que você quer marcar ou mudar?") }, modifier = Modifier.weight(1f), maxLines = 3)
-                    IconButton(onClick = { escutar() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.Mic, contentDescription = "Falar", tint = Acento) }
-                }
-                val resp = respostaAssistente
-                if (assistenteOcupado) Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Acento); Text("Interpretando…", color = Tinta2, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp)) }
-                assistenteErro?.let { Text(it, color = Perigo, fontSize = 12.sp) }
-                if (resp != null) Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Papel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (resp.resumo.isNotEmpty()) Text(resp.resumo, color = Tinta, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    resp.acoes.forEach { a -> Text("• " + Assistente.descreve(a, blocos), color = Tinta, fontSize = 13.sp) }
-                    resp.pergunta?.let { Text(it, color = Acento, fontSize = 13.sp) }
-                    if (resp.acoes.isEmpty() && resp.pergunta == null) Text("Não entendi nada que dê para aplicar. Tente com dia e horário.", color = Tinta2, fontSize = 12.sp)
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { assistenteAberto = false }, modifier = Modifier.height(48.dp)) { Text("Fechar", color = Tinta2) }
-                    Spacer(Modifier.width(8.dp))
-                    if (resp != null && resp.acoes.isNotEmpty()) {
-                        Button(onClick = { aplicarAcoes(resp); assistenteAberto = false; pedido = ""; respostaAssistente = null }, modifier = Modifier.height(48.dp)) { Text("Aplicar (${resp.acoes.size})") }
-                    } else Button(onClick = {
-                        if (pedido.isBlank()) return@Button
-                        escopo.launch { assistenteOcupado = true; assistenteErro = null; respostaAssistente = null
-                            Assistente.pedir(contexto, pedido.trim(), hoje, seg, blocos).onSuccess { respostaAssistente = it }.onFailure { assistenteErro = it.message ?: "Falhou" }
-                            assistenteOcupado = false }
-                    }, enabled = !assistenteOcupado && pedido.isNotBlank(), modifier = Modifier.height(48.dp)) { Text("Entender") }
-                }
-            }
-        }
-    }
-    if (chaveDialogo) {
-        var chave by remember { mutableStateOf(Assistente.chavePropria(contexto)) }
-        androidx.compose.material3.AlertDialog(onDismissRequest = { chaveDialogo = false },
-            title = { Text("Minha chave do OpenRouter") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Sem chave, o assistente usa a conta do app, com modelos gratuitos e limite diário. Com a sua chave (openrouter.ai/keys), os pedidos saem da sua conta. Ela fica só neste aparelho.", fontSize = 12.sp, color = Tinta2)
-                OutlinedTextField(value = chave, onValueChange = { chave = it }, singleLine = true, placeholder = { Text("sk-or-…") }, modifier = Modifier.fillMaxWidth()) } },
-            confirmButton = { Button(onClick = { Assistente.guardaChave(contexto, chave); chaveDialogo = false }) { Text("Salvar") } },
-            dismissButton = { TextButton(onClick = { Assistente.guardaChave(contexto, ""); chaveDialogo = false }) { Text("Limpar") } })
-    }
+    })
 
     // ---- editor em folha ----
     edicao?.let { ed ->
