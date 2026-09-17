@@ -1,0 +1,72 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  apk:
+    name: APK de release (assinado, menor)
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Restaura keystore (assinatura fixa)
+        run: |
+          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/agenda.jks"
+          echo "AGENDA_KEYSTORE=$RUNNER_TEMP/agenda.jks" >> "$GITHUB_ENV"
+          echo "AGENDA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+      - name: Build (release assinado, compactado com R8)
+        run: gradle :app:assembleRelease --no-daemon
+      # Artifact é best-effort (cota de storage já estourou no passado); a entrega de verdade é o
+      # release "ultimo", cujo asset não conta na cota e tem link fixo.
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with: { name: agenda-semanal-debug, path: app/build/outputs/apk/release/app-release.apk }
+      - name: Publica releases (uma por build, com histórico, e o link fixo "ultimo")
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          VERSAO=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          TAG="v${VERSAO}-build${GITHUB_RUN_NUMBER}"
+          cp app/build/outputs/apk/release/app-release.apk "agenda-semanal-${TAG}.apk"
+          cp app/build/outputs/apk/release/app-release.apk agenda-semanal.apk
+          # histórico: cada build vira uma release própria, fica guardada para baixar depois
+          gh release create "$TAG" "agenda-semanal-${TAG}.apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Build ${GITHUB_RUN_NUMBER} (v${VERSAO})" --notes "Commit: ${GITHUB_SHA:0:7} — $(git log -1 --pretty=%s)"
+          # link fixo: sempre a última
+          gh release create ultimo --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Última build" --notes "Sempre o APK mais recente. Histórico completo nas releases numeradas." || true
+          gh release upload ultimo agenda-semanal.apk --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publica no R2 (link público fixo) e atualiza releases.json — igual ao canal do pitanga
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_PUBLICO: https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev
+        run: |
+          VERSAO=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          CODIGO=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          TAG="v${VERSAO}-build${GITHUB_RUN_NUMBER}"
+          aws s3 cp app/build/outputs/apk/release/app-release.apk "s3://omnigen-assets/agenda-semanal/agenda-semanal-${TAG}.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive
+          aws s3 cp app/build/outputs/apk/release/app-release.apk "s3://omnigen-assets/agenda-semanal/agenda-semanal.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive --cache-control "no-cache"
+          python3 - "$VERSAO" "$CODIGO" "$TAG" "$R2_PUBLICO" <<'EOF'
+          import json, os, sys, subprocess, datetime
+          versao, codigo, tag, pub = sys.argv[1:5]
+          p = "releases.json"
+          m = json.load(open(p)) if os.path.exists(p) else {"releases": []}
+          msg = subprocess.run(["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True).stdout.strip()
+          m.update({"versionName": versao, "versionCode": int(codigo), "build": int(os.environ["GITHUB_RUN_NUMBER"]),
+                    "apk": f"{pub}/agenda-semanal/agenda-semanal.apk",
+                    "apkVersao": f"{pub}/agenda-semanal/agenda-semanal-{tag}.apk",
+                    "github": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/ultimo/agenda-semanal.apk",
+                    "publicadoEm": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
+          m["releases"] = [{"versao": versao, "build": int(os.environ["GITHUB_RUN_NUMBER"]), "tag": tag, "apk": m["apkVersao"], "mudou": [msg]}] + [r for r in m.get("releases", []) if r.get("tag") != tag]
+          json.dump(m, open(p, "w"), ensure_ascii=False, indent=2); open(p, "a").write("\n")
+          EOF
+          aws s3 cp releases.json "s3://omnigen-assets/agenda-semanal/releases.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json --cache-control "no-cache"
+          git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases.json; git commit -m "releases.json: ${TAG} [skip ci]" || true; git push
