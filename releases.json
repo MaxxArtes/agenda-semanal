@@ -1,1 +1,20 @@
-{"releases": []}
+{
+  "releases": [
+    {
+      "versao": "0.1",
+      "build": 2,
+      "tag": "v0.1-build2",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.1-build2.apk",
+      "mudou": [
+        "CI: tolera ausência dos secrets (assina com debug e pula o R2)"
+      ]
+    }
+  ],
+  "versionName": "0.1",
+  "versionCode": 1,
+  "build": 2,
+  "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.1-build2.apk",
+  "github": "https://github.com/MaxxArtes/agenda-semanal/releases/download/ultimo/agenda-semanal.apk",
+  "publicadoEm": "2026-09-17T21:58:32Z"
+}
