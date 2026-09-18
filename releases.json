@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.11",
+      "build": 16,
+      "tag": "v0.11-build16",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.11-build16.apk",
+      "mudou": [
+        "Assistente.kt: parêntese a mais"
+      ]
+    },
+    {
       "versao": "0.10",
       "build": 13,
       "tag": "v0.10-build13",
@@ -91,11 +100,11 @@
       ]
     }
   ],
-  "versionName": "0.10",
-  "versionCode": 10,
-  "build": 13,
+  "versionName": "0.11",
+  "versionCode": 11,
+  "build": 16,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.10-build13.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.11-build16.apk",
   "github": "https://github.com/MaxxArtes/agenda-semanal/releases/download/ultimo/agenda-semanal.apk",
-  "publicadoEm": "2026-09-18T00:03:00Z"
+  "publicadoEm": "2026-09-18T00:57:15Z"
 }
