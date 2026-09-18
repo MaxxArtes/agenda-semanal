@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.agenda"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.10"
+        versionCode = 11
+        versionName = "0.11"
         // token do assistente vem do CI (secret AGENDA_ASSISTENTE_TOKEN); sem ele o campo do assistente fica escondido
         buildConfigField("String", "ASSISTENTE_TOKEN", "\"" + (System.getenv("AGENDA_ASSISTENTE_TOKEN") ?: "") + "\"")
     }

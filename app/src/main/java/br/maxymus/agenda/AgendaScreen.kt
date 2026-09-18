@@ -99,6 +99,9 @@ private val FUSO: ZoneId = ZoneId.of("America/Cuiaba")
 private val fmtData: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 private val fmtCurta: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", Locale("pt", "BR"))
 
+/** Operação que espera a escolha do alcance (só numa rotina; avulsos e exceções salvam direto). */
+private sealed class Pendente { data class Mover(val b: Bloco, val dia: Int, val ini: Int) : Pendente(); data class Esticar(val b: Bloco, val ini: Int, val fim: Int) : Pendente(); data class Colar(val c: Bloco, val dia: Int, val ini: Int) : Pendente(); data class Duplicar(val s: Bloco) : Pendente() }
+
 /** Dados que o editor manipula; `base` nulo = bloco novo. */
 private data class Edicao(val base: Bloco?, val dia: Int, val ini: Int, val fim: Int, val cat: Categoria, val rot: String)
 
@@ -117,7 +120,8 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     var carregou by remember { mutableStateOf(false) }
     var rede by remember { mutableStateOf<Rede>(Rede.Carregando("Carregando semana…")) }
     var selecionado by remember { mutableStateOf<String?>(null) }
-    var alcance by remember { mutableStateOf("semana") }
+    // operação sobre bloco de rotina esperando a escolha do alcance (Astra, DESIGN_ASTRA_ALCANCE.md: o alcance pertence à operação)
+    var pendente by remember { mutableStateOf<Pendente?>(null) }
     var copiado by remember { mutableStateOf<Bloco?>(null) }
     var diaMovel by remember { mutableStateOf(hoje.dayOfWeek.value - 1) }
     var edicao by remember { mutableStateOf<Edicao?>(null) }
@@ -131,11 +135,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     val ocupado = false
     fun sel() = blocos.firstOrNull { it.id == selecionado }
     fun dataDe(dia: Int): LocalDate = seg.plusDays(dia.toLong())
-    fun rotuloAlcance(b: Bloco?, escopo: String = alcance): String = when {
-        b != null && b.unico -> "Só ${b.data.format(fmtCurta)}"
-        escopo == "dia" -> "Só ${dataDe(b?.dia ?: diaMovel).format(fmtCurta)}"
-        else -> "Série inteira"
-    }
+    fun ehRotina(b: Bloco) = b.serie != null && !b.unico
 
     /**
      * Lê a semana do Google. A tela nunca espera escrita: mudanças aplicam na hora e vão para a Fila em
@@ -169,7 +169,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(60_000); val h = LocalDate.now(FUSO); if (h != hoje) hoje = h } }
 
     // ---- mudanças com alcance ----
-    fun aplicar(b: Bloco, dia: Int, ini: Int, fim: Int, cat: Categoria = b.cat, rot: String = b.rot, escopoMudanca: String = alcance) {
+    fun aplicar(b: Bloco, dia: Int, ini: Int, fim: Int, cat: Categoria = b.cat, rot: String = b.rot, escopoMudanca: String) {
         val data = dataDe(dia)
         val soDia = b.serie != null && (b.unico || escopoMudanca == "dia")
         blocos = blocos.map { if (it.id == b.id) it.copy(data = data, ini = ini, fim = fim, cat = cat, rot = rot, unico = it.unico || soDia) else it }
@@ -182,13 +182,13 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         }
         if (b.serie != null && !soDia) precisaReler = true   // a série mudou: as ocorrências da semana precisam vir do Google
     }
-    fun criar(dia: Int, ini: Int, fim: Int, cat: Categoria, rot: String, escopoMudanca: String = alcance) {
+    fun criar(dia: Int, ini: Int, fim: Int, cat: Categoria, rot: String, escopoMudanca: String) {
         val data = dataDe(dia); val tmp = Ids.temporario(); val rotina = escopoMudanca != "dia"
         blocos = blocos + Bloco(tmp, if (rotina) tmp else null, data, ini, fim, cat, rot, unico = !rotina)
         Fila.enfileirar("criar $rot") { val real = if (rotina) repo.criarSerie(rot, cat, data, ini, fim) else repo.criarUnico(rot, cat, data, ini, fim); Ids.registra(tmp, real) }
         if (rotina) precisaReler = true   // a ocorrência de verdade tem id próprio, diferente do id da série
     }
-    fun remover(b: Bloco, escopoMudanca: String = alcance) {
+    fun remover(b: Bloco, escopoMudanca: String) {
         selecionado = null
         val serieInteira = b.serie != null && !b.unico && escopoMudanca == "semana"
         blocos = if (serieInteira) blocos.filter { it.serie != b.serie } else blocos.filter { it.id != b.id }
@@ -221,11 +221,6 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
             Text(intervalo(seg), color = Tinta, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             TextButton(onClick = { seg = hoje.minusDays((hoje.dayOfWeek.value - 1).toLong()); diaMovel = hoje.dayOfWeek.value - 1 }) { Text("Hoje", color = Acento) }
             IconButton(onClick = { seg = seg.plusWeeks(1) }) { Icon(Icons.Filled.ChevronRight, contentDescription = "Próxima semana", tint = Tinta) }
-        }
-        // ---- alcance das mudanças ----
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Aplicar mudanças a", color = Tinta2, fontSize = 12.sp, modifier = Modifier.padding(end = 12.dp))
-            Segmentado(listOf("semana" to "Toda semana", "dia" to "Só este dia"), alcance) { alcance = it }
         }
         // ---- faixa de dias (celular) ----
         if (movel) Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -270,14 +265,14 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                     val c = copiado
                     when {
                         !carregou -> {}
-                        c != null -> criar(dia, m.coerceAtMost(FIM - c.duracao), (m + c.duracao).coerceAtMost(FIM), c.cat, c.rot)
+                        c != null -> pendente = Pendente.Colar(c, dia, m.coerceAtMost(FIM - c.duracao))
                         selecionado != null -> selecionado = null
                         else -> edicao = Edicao(null, dia, m, (m + 60).coerceAtMost(FIM), Categoria.OUTRO, "")
                     }
                 },
                 aoTocarBloco = { b -> if (selecionado == b.id) edicao = Edicao(b, b.dia, b.ini, b.fim, b.cat, b.rot) else selecionado = b.id },
-                aoMover = { b, dia, ini -> aplicar(b, dia, ini, ini + b.duracao) },
-                aoEsticar = { b, ini, fim -> aplicar(b, b.dia, ini, fim) },
+                aoMover = { b, dia, ini -> if (ehRotina(b)) pendente = Pendente.Mover(b, dia, ini) else aplicar(b, dia, ini, ini + b.duracao, escopoMudanca = "dia") },
+                aoEsticar = { b, ini, fim -> if (ehRotina(b)) pendente = Pendente.Esticar(b, ini, fim) else aplicar(b, b.dia, ini, fim, escopoMudanca = "dia") },
                 aoDeslizar = { sentido -> if (selecionado == null) diaMovel = (diaMovel + sentido).coerceIn(0, 6) },
             )
         }
@@ -286,17 +281,17 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         Column(modifier = Modifier.fillMaxWidth().background(Elevada).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
             when {
                 c != null -> {
-                    Text("Copiado: ${c.rot} · ${rotuloAlcance(null)}", color = Tinta, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("Toque numa hora vazia para colar.", color = Tinta2, fontSize = 12.sp)
+                    Text("Copiado: ${c.rot}", color = Tinta, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Toque num horário para escolher como colar.", color = Tinta2, fontSize = 12.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { copiado = null }, modifier = Modifier.height(48.dp)) { Text("Parar") } }
                 }
                 s != null -> {
                     Text("${s.rot} · ${hhmm(s.ini)}–${hhmm(s.fim)}", color = Tinta, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("Mudanças: ${rotuloAlcance(s)}", color = Tinta2, fontSize = 12.sp)
+                    Text(if (ehRotina(s)) "Rotina semanal · Alcance definido ao aplicar" else "Mudanças: só ${s.data.format(fmtCurta)}", color = Tinta2, fontSize = 12.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 4.dp)) {
                         Button(onClick = { copiado = s; selecionado = null }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Copiar") }
                         val cabe = s.fim + s.duracao <= FIM
-                        OutlinedButton(onClick = { criar(s.dia, s.fim, s.fim + s.duracao, s.cat, s.rot) }, enabled = cabe && !ocupado, modifier = Modifier.height(48.dp)) { Text(if (cabe) "Duplicar" else "Duplicar (não cabe)") }
+                        OutlinedButton(onClick = { pendente = Pendente.Duplicar(s) }, enabled = cabe && !ocupado, modifier = Modifier.height(48.dp)) { Text(if (cabe) "Duplicar" else "Duplicar (não cabe)") }
                         OutlinedButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot) }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Editar") }
                         if (s.unico && s.serie != null) OutlinedButton(onClick = { selecionado = null; precisaReler = true; Fila.enfileirar("voltar ${s.rot} à rotina") { repo.voltarRotina(s.copy(id = Ids.real(s.id), serie = Ids.real(s.serie!!))) } }, modifier = Modifier.height(48.dp)) { Text("Voltar à rotina") }
                         OutlinedButton(onClick = { selecionado = null }, modifier = Modifier.height(48.dp)) { Text("Desmarcar") }
@@ -324,6 +319,35 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         }
     })
 
+    // ---- folha: alcance da operação sobre uma rotina ----
+    pendente?.let { op ->
+        val folhaOp = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val (titulo, verbo, dataAlvo) = when (op) {
+            is Pendente.Mover -> Triple("Aplicar movimento a…", "Mover", dataDe(op.dia))
+            is Pendente.Esticar -> Triple("Aplicar horário a…", "Alterar horário", op.b.data)
+            is Pendente.Colar -> Triple("Colar \"${op.c.rot}\" em ${DIAS[op.dia]} ${hhmm(op.ini)}…", "Colar", dataDe(op.dia))
+            is Pendente.Duplicar -> Triple("Duplicar \"${op.s.rot}\" logo depois…", "Duplicar", op.s.data)
+        }
+        fun executa(escopoOp: String) {
+            when (op) {
+                is Pendente.Mover -> aplicar(op.b, op.dia, op.ini, op.ini + op.b.duracao, escopoMudanca = escopoOp)
+                is Pendente.Esticar -> aplicar(op.b, op.b.dia, op.ini, op.fim, escopoMudanca = escopoOp)
+                is Pendente.Colar -> criar(op.dia, op.ini, (op.ini + op.c.duracao).coerceAtMost(FIM), op.c.cat, op.c.rot, escopoOp)
+                is Pendente.Duplicar -> criar(op.s.dia, op.s.fim, op.s.fim + op.s.duracao, op.s.cat, op.s.rot, escopoOp)
+            }
+            pendente = null
+        }
+        ModalBottomSheet(onDismissRequest = { pendente = null }, sheetState = folhaOp, containerColor = Elevada, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp).align(Alignment.CenterHorizontally).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(titulo, color = Tinta, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold)
+                Button(onClick = { executa("dia") }, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("$verbo só ${dataAlvo.format(fmtCurta)}") }
+                OutlinedButton(onClick = { executa("semana") }, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("$verbo toda semana") }
+                Text(if (op is Pendente.Colar || op is Pendente.Duplicar) "Toda semana cria uma rotina nova a partir de ${dataAlvo.format(fmtCurta)}." else "Toda semana altera a série inteira, inclusive as semanas passadas.", color = Tinta2, fontSize = 12.sp, lineHeight = 16.sp)
+                TextButton(onClick = { pendente = null }, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("Cancelar", color = Tinta2) }
+            }
+        }
+    }
+
     // ---- editor em folha ----
     edicao?.let { ed ->
         var rot by remember(ed) { mutableStateOf(ed.rot) }
@@ -331,7 +355,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         var cat by remember(ed) { mutableStateOf(ed.cat) }
         var ini by remember(ed) { mutableStateOf(ed.ini) }
         var fim by remember(ed) { mutableStateOf(ed.fim) }
-        var escopoMudanca by remember(ed) { mutableStateOf(if (ed.base?.unico == true) "dia" else alcance) }
+        var escopoMudanca by remember(ed) { mutableStateOf("dia") }
         var erroNome by remember(ed) { mutableStateOf<String?>(null) }
         var erroHora by remember(ed) { mutableStateOf<String?>(null) }
         var confirmaRemover by remember(ed) { mutableStateOf(false) }

@@ -1,3 +1,5 @@
+> Atualização 18/09: o controle segmentado "Toda semana / Só este dia" do cabeçalho foi REMOVIDO; o alcance é escolhido ao concluir cada operação sobre uma rotina (ver DESIGN_ASTRA_ALCANCE.md). O contrato "soltar salva" vale para avulsos e exceções; para rotinas, soltar abre a folha de alcance.
+
 **Especificação de redesign — Agenda Semanal**
 Base: imagem fornecida, `AgendaScreen.kt`, `Modelo.kt` e `GoogleAgenda.kt`. Medidas em dp; tipografia em sp. Os 1080×2400 pixels da captura não equivalem às dimensões de layout do Android.
 

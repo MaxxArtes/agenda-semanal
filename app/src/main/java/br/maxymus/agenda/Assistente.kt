@@ -93,7 +93,7 @@ object Assistente {
         val acoes = mutableListOf<Acao>(); val arr = j.optJSONArray("acoes") ?: JSONArray()
         for (i in 0 until arr.length()) { val a = arr.getJSONObject(i)
             acoes += Acao(a.optString("tipo"), a.optString("id").ifEmpty { null }, if (a.has("dia")) a.optInt("dia") else null, minutos(a.optString("ini").ifEmpty { null }), minutos(a.optString("fim").ifEmpty { null }),
-                a.optString("cat").ifEmpty { null }?.let { Categoria.por(it) }, a.optString("rot").ifEmpty { null }, a.optString("alcance", "dia")) }
+                a.optString("cat").ifEmpty { null }?.let { Categoria.por(it) }, a.optString("rot").ifEmpty { null }, if (a.optString("alcance") == "semana") "semana" else "dia")) }
         val sug = mutableListOf<Sugestao>(); j.optJSONArray("sugestoes")?.let { sa -> for (i in 0 until sa.length()) { val x = sa.getJSONObject(i); if (x.optString("rotulo").isNotEmpty() && x.optString("pedido").isNotEmpty()) sug += Sugestao(x.optString("rotulo"), x.optString("pedido")) } }
         val limpo = JSONObject().apply { put("resumo", j.optString("resumo")); put("acoes", j.optJSONArray("acoes") ?: JSONArray()); put("pergunta", j.opt("pergunta")); put("sugestoes", j.optJSONArray("sugestoes") ?: JSONArray()) }
         return Resposta(j.optString("resumo"), acoes, j.optString("pergunta").ifEmpty { null }.takeIf { it != "null" }, sug.take(6), j.optString("modelo").ifEmpty { null }, j.optString("plano").ifEmpty { null }, j.optInt("custo"), conta(j.optJSONObject("conta")), limpo.toString())
