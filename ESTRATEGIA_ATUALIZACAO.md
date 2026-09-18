@@ -73,3 +73,9 @@ do Obtainium. Play Protect pode avisar nessa primeira instalação; nas seguinte
 Passos do dono: instalar Obtainium (github.com/ImranR98/Obtainium/releases, APK) > Adicionar app > colar a URL do
 repo > Instalar a 0.14 por ele > Configurações > ligar atualizações em segundo plano. Prova: quando sair a 0.15,
 ela tem que chegar sem toque.
+
+## Comprovado 18/09 11:00 (Cuiabá)
+0.14 instalada pelo Obtainium; 0.15 publicada pelo CI e instalada em silêncio ao rodar a busca em segundo plano:
+sem tela de confirmação, sem Play Protect. Só a verificação de segurança da própria Xiaomi apareceu.
+Obtainium é o canal oficial de atualização enquanto não houver Play. Configuração usada: instalação silenciosa
+em segundo plano ligada, pular diálogo de confirmação, método Sistema, intervalo 6 h, pré-lançamentos desligados.
