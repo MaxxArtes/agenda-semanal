@@ -522,6 +522,8 @@ private fun Grade(
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Papel)) {
         val escalaMin = ((maxHeight - cabecalho) / linhas / basePadrao).coerceIn(0.12f, 1f)   // dia inteiro visível
         val escalaMax = 2f
+        // o botão da barra de cima (Padrão / Dia inteiro) muda a preferência por fora; a escala local segue, fora da pinça
+        LaunchedEffect(escalaPref, escalaMin) { if (!manipulando) escalaLocal = if (escalaPref == 0f) escalaMin else escalaPref }
         val escala = if (escalaPref == 0f) escalaMin else escalaLocal.coerceIn(escalaMin, escalaMax)
         val alturaMeia: Dp = basePadrao * escala
         val alturaTotal = alturaMeia * linhas + cabecalho
