@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.15",
+      "build": 20,
+      "tag": "v0.15-build20",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.15-build20.apk",
+      "mudou": [
+        "0.15: prova da atualização automática pelo Obtainium"
+      ]
+    },
+    {
       "versao": "0.14",
       "build": 19,
       "tag": "v0.14-build19",
@@ -127,11 +136,11 @@
       ]
     }
   ],
-  "versionName": "0.14",
-  "versionCode": 14,
-  "build": 19,
+  "versionName": "0.15",
+  "versionCode": 15,
+  "build": 20,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.14-build19.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.15-build20.apk",
   "github": "https://github.com/MaxxArtes/agenda-semanal/releases/download/ultimo/agenda-semanal.apk",
-  "publicadoEm": "2026-09-18T14:01:18Z"
+  "publicadoEm": "2026-09-18T14:57:07Z"
 }
