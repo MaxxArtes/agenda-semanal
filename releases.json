@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.12",
+      "build": 17,
+      "tag": "v0.12-build17",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.12-build17.apk",
+      "mudou": [
+        "Pinça na grade (Astra, DESIGN_ASTRA_PINCA.md): escala vertical contínua entre dia inteiro e 2x, âncora sob os dedos, botão Dia inteiro/Padrão, conteúdo dos blocos por faixa de altura sem encolher fonte, alças só na escala padrão, 'Ampliar para ajustar'"
+      ]
+    },
+    {
       "versao": "0.11",
       "build": 16,
       "tag": "v0.11-build16",
@@ -100,11 +109,11 @@
       ]
     }
   ],
-  "versionName": "0.11",
-  "versionCode": 11,
-  "build": 16,
+  "versionName": "0.12",
+  "versionCode": 12,
+  "build": 17,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.11-build16.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/agenda-semanal/agenda-semanal-v0.12-build17.apk",
   "github": "https://github.com/MaxxArtes/agenda-semanal/releases/download/ultimo/agenda-semanal.apk",
-  "publicadoEm": "2026-09-18T00:57:15Z"
+  "publicadoEm": "2026-09-18T00:59:47Z"
 }
