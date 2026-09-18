@@ -25,7 +25,8 @@ object Assistente {
     class Falha(val codigo: Int, mensagem: String, val corpo: JSONObject?) : Exception(mensagem)
 
     data class Acao(val tipo: String, val id: String?, val dia: Int?, val ini: Int?, val fim: Int?, val cat: Categoria?, val rot: String?, val alcance: String)
-    data class Resposta(val resumo: String, val acoes: List<Acao>, val pergunta: String?, val modelo: String?, val plano: String?, val custo: Int, val conta: Conta?)
+    data class Sugestao(val rotulo: String, val pedido: String)
+    data class Resposta(val resumo: String, val acoes: List<Acao>, val pergunta: String?, val sugestoes: List<Sugestao>, val modelo: String?, val plano: String?, val custo: Int, val conta: Conta?, val bruto: String)
     data class Conta(val email: String, val plano: String, val consentiu: Boolean, val saldo: Int, val preco: Int, val gratisHoje: Int, val gratisLimite: Int, val gratisLiberaEm: String?,
                      val valoresRecarga: List<Int>, val recargaDisponivel: Boolean, val ambienteAsaas: String, val pixPendente: String?)
     data class Recarga(val id: String, val valor: Int, val status: String, val pixPayload: String?, val pixImagem: String?, val vence: String?)
@@ -80,10 +81,11 @@ object Assistente {
         return lista to conta(j.optJSONObject("conta"))
     }
 
+    /** `anterior` = (pedido, JSON bruto da resposta) da rodada que está sendo refinada. */
     suspend fun pedir(ctx: Context, email: String, pedido: String, hoje: LocalDate, seg: LocalDate, blocos: List<Bloco>, chave: String?, anterior: Pair<String, String>? = null): Resposta {
         val corpo = JSONObject().apply {
             put("pedido", pedido); put("hoje", hoje.toString()); put("seg", seg.toString())
-            anterior?.let { (ped, perg) -> put("anterior", JSONObject().put("pedido", ped).put("pergunta", perg)) }
+            anterior?.let { (ped, bruto) -> put("anterior", JSONObject().put("pedido", ped).put("resposta", runCatching { JSONObject(bruto) }.getOrElse { JSONObject() })) }
             if (!chave.isNullOrBlank()) put("chave", chave)
             put("blocos", JSONArray().apply { blocos.forEach { b -> put(JSONObject().apply { put("id", b.id); put("dia", b.dia); put("ini", hhmm(b.ini)); put("fim", hhmm(b.fim)); put("cat", b.cat.chave); put("rot", b.rot); put("unico", b.unico) }) } })
         }
@@ -92,7 +94,9 @@ object Assistente {
         for (i in 0 until arr.length()) { val a = arr.getJSONObject(i)
             acoes += Acao(a.optString("tipo"), a.optString("id").ifEmpty { null }, if (a.has("dia")) a.optInt("dia") else null, minutos(a.optString("ini").ifEmpty { null }), minutos(a.optString("fim").ifEmpty { null }),
                 a.optString("cat").ifEmpty { null }?.let { Categoria.por(it) }, a.optString("rot").ifEmpty { null }, a.optString("alcance", "dia")) }
-        return Resposta(j.optString("resumo"), acoes, j.optString("pergunta").ifEmpty { null }.takeIf { it != "null" }, j.optString("modelo").ifEmpty { null }, j.optString("plano").ifEmpty { null }, j.optInt("custo"), conta(j.optJSONObject("conta")))
+        val sug = mutableListOf<Sugestao>(); j.optJSONArray("sugestoes")?.let { sa -> for (i in 0 until sa.length()) { val x = sa.getJSONObject(i); if (x.optString("rotulo").isNotEmpty() && x.optString("pedido").isNotEmpty()) sug += Sugestao(x.optString("rotulo"), x.optString("pedido")) } }
+        val limpo = JSONObject().apply { put("resumo", j.optString("resumo")); put("acoes", j.optJSONArray("acoes") ?: JSONArray()); put("pergunta", j.opt("pergunta")); put("sugestoes", j.optJSONArray("sugestoes") ?: JSONArray()) }
+        return Resposta(j.optString("resumo"), acoes, j.optString("pergunta").ifEmpty { null }.takeIf { it != "null" }, sug.take(6), j.optString("modelo").ifEmpty { null }, j.optString("plano").ifEmpty { null }, j.optInt("custo"), conta(j.optJSONObject("conta")), limpo.toString())
     }
 
     /** Frase legível de uma ação, para a confirmação. */

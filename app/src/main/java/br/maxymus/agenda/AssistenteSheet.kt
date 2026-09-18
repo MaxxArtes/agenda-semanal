@@ -69,7 +69,7 @@ import java.time.format.DateTimeFormatter
 /** Etapas da folha do assistente (Astra, DESIGN_ASTRA_PLANOS.md). */
 private enum class Etapa { CARREGANDO, PLANOS, CHAVE, PEDIDO, RECARGA, PIX, HISTORICO }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List<Bloco>, aoFechar: () -> Unit, aoAplicar: (Assistente.Resposta) -> Unit) {
     val ctx = LocalContext.current
@@ -84,6 +84,8 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
     var pedidoRespondido by remember { mutableStateOf("") }   // a resposta só vale para o texto que a gerou
     var resposta by remember { mutableStateOf<Assistente.Resposta?>(null) }
     var perguntaAberta by remember { mutableStateOf<Pair<String, String>?>(null) }   // (pedido original, pergunta do assistente)
+    var refinando by remember { mutableStateOf<String?>(null) }   // rótulo da ficha em processamento
+    var ultimoAjuste by remember { mutableStateOf<String?>(null) }
     var bloqueio by remember { mutableStateOf<Pair<String, String>?>(null) }   // (mensagem, ação: "credito" | "planos")
     var recarga by remember { mutableStateOf<Assistente.Recarga?>(null) }
     var voltarPara by remember { mutableStateOf(Etapa.PEDIDO) }
@@ -141,9 +143,9 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                         }, Modifier.weight(1f))
                         TextButton(onClick = { erro = null; etapa = Etapa.PLANOS }) { Text("Trocar", color = Acento) }
                     }
-                    Texto2("Exemplos: \"marca dentista quinta 15h\", \"academia toda terça das 6 às 7\", \"joga o teclado de hoje pra 21h\".")
+                    if (resposta == null) Texto2("Exemplos: \"marca dentista quinta 15h\", \"academia toda terça das 6 às 7\", \"joga o teclado de hoje pra 21h\".")
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = pedido, onValueChange = { pedido = it; if (it != pedidoRespondido && perguntaAberta == null) resposta = null }, placeholder = { Text(if (perguntaAberta != null) "Responda aqui (ex.: 09:30)" else "O que você quer marcar ou mudar?") }, modifier = Modifier.weight(1f), maxLines = 3)
+                        OutlinedTextField(value = pedido, onValueChange = { pedido = it }, placeholder = { Text(if (perguntaAberta != null) "Responda aqui" else if (resposta != null) "Novo pedido ou ajuste em texto" else "O que você quer marcar ou mudar?") }, modifier = Modifier.weight(1f), maxLines = 3)
                         IconButton(onClick = {
                             val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply { putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Diga o que quer marcar ou mudar") }
                             runCatching { ouvir.launch(i) }.onFailure { erro = "Este aparelho não tem reconhecimento de voz disponível." }
@@ -162,29 +164,51 @@ fun AssistenteSheet(email: String, hoje: LocalDate, seg: LocalDate, blocos: List
                         }
                     }
                     val resp = resposta
-                    if (resp != null && (pedido == pedidoRespondido || perguntaAberta != null)) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Papel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    fun refinar(rotulo: String, texto: String) {
+                        val base = resposta ?: return
+                        escopo.launch { refinando = rotulo; erro = null; bloqueio = null
+                            runCatching { Assistente.pedir(ctx, email, texto, hoje, seg, blocos, if (usaChave) chave else null, pedidoRespondido to base.bruto) }
+                                .onSuccess { r -> resposta = r; r.conta?.let { conta = it }; ultimoAjuste = rotulo
+                                    perguntaAberta = if (r.pergunta != null && r.acoes.isEmpty()) (pedidoRespondido to r.pergunta) else null }
+                                .onFailure { e -> val f = e as? Assistente.Falha
+                                    when (f?.codigo) { 402 -> bloqueio = "Saldo insuficiente para ajustar. A proposta anterior foi mantida e pode ser aplicada." to "credito"
+                                        429 -> bloqueio = "O limite diário do gratuito foi atingido. A proposta anterior foi mantida." to "planos"
+                                        else -> erro = "Não foi possível ajustar. A proposta anterior foi mantida." } }
+                            refinando = null }
+                    }
+                    if (resp != null && (pedido == pedidoRespondido || perguntaAberta != null || pedido.isEmpty())) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Papel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        refinando?.let { Linha { CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Acento); Texto2("Ajustando: $it…", Modifier.padding(start = 8.dp)) } }
                         if (resp.resumo.isNotEmpty()) Text(resp.resumo, color = Tinta, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
                         resp.acoes.forEach { a -> Text("• " + Assistente.descreve(a, blocos), color = Tinta, fontSize = 14.sp, lineHeight = 20.sp) }
                         resp.pergunta?.let { Text(it, color = Acento, fontSize = 14.sp, lineHeight = 20.sp) }
                         if (resp.acoes.isEmpty() && resp.pergunta == null) Texto2("Não entendi nada que dê para aplicar. Tente com dia e horário.")
-                        if (resp.custo > 0) Texto2("Este pedido custou ${reais(resp.custo)}." + (if (resp.pergunta != null) " Cada novo envio custa ${reais(resp.custo)}." else ""))
+                        ultimoAjuste?.let { Texto2("Último ajuste: $it") }
+                        if (resp.sugestoes.isNotEmpty()) {
+                            Text(if (resp.pergunta != null) "Responder:" else "Quer ajustar?", color = Tinta, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+                            Texto2(when { usaChave -> "Cada ajuste é um pedido na sua conta do OpenRouter."; c?.plano == "pago" -> "Cada ajuste custa ${reais(c.preco)}. Cobrado quando a resposta fica pronta, mesmo sem aplicar."; c != null -> "Cada ajuste usa 1 dos ${c.gratisLimite} pedidos diários."; else -> "" })
+                            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                resp.sugestoes.forEach { sg -> OutlinedButton(onClick = { refinar(sg.rotulo, sg.pedido) }, enabled = refinando == null && !ocupado, modifier = Modifier.height(48.dp)) { Text(sg.rotulo, color = Acento) } }
+                            }
+                        }
+                        if (resp.custo > 0 && refinando == null) Texto2(if (ultimoAjuste != null) "Ajuste concluído · ${reais(resp.custo)}" else "Este pedido custou ${reais(resp.custo)}.")
+                        else if (resp.plano == "gratuito" && ultimoAjuste != null && refinando == null) Texto2("Ajuste concluído · 1 pedido usado")
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { etapa = Etapa.HISTORICO }) { Text("Histórico", color = Tinta2) }
                         Spacer(Modifier.weight(1f))
                         TextButton(onClick = aoFechar, modifier = Modifier.height(48.dp)) { Text("Fechar", color = Tinta2) }
                         Spacer(Modifier.width(8.dp))
-                        if (resp != null && pedido == pedidoRespondido && resp.acoes.isNotEmpty()) {
-                            Button(onClick = { aoAplicar(resp); aoFechar() }, modifier = Modifier.height(48.dp)) { Text("Aplicar (${resp.acoes.size})") }
+                        if (resp != null && (pedido == pedidoRespondido || pedido.isEmpty()) && resp.acoes.isNotEmpty()) {
+                            Button(onClick = { aoAplicar(resp); aoFechar() }, enabled = refinando == null, modifier = Modifier.height(48.dp)) { Text("Aplicar (${resp.acoes.size})") }
                         } else Button(onClick = {
                             if (pedido.isBlank()) return@Button
-                            escopo.launch { ocupado = true; erro = null; bloqueio = null; resposta = null
+                            escopo.launch { ocupado = true; erro = null; bloqueio = null; if (perguntaAberta == null) { resposta = null; ultimoAjuste = null }
                                 val texto = pedido.trim()
-                                val ant = perguntaAberta
+                                val ant = perguntaAberta?.let { it.first to (resposta?.bruto ?: "{}") }
                                 runCatching { Assistente.pedir(ctx, email, texto, hoje, seg, blocos, if (usaChave) chave else null, ant) }
                                     .onSuccess { r -> resposta = r; pedidoRespondido = pedido; r.conta?.let { conta = it }
                                         perguntaAberta = if (r.pergunta != null && r.acoes.isEmpty()) ((ant?.first ?: texto) + (if (ant != null) " / " + texto else "")) to r.pergunta else null
-                                        if (r.pergunta != null && r.acoes.isEmpty()) pedido = "" }
+                                        pedidoRespondido = texto; pedido = "" }
                                     .onFailure { e ->
                                         val f = e as? Assistente.Falha
                                         when (f?.codigo) {

@@ -491,7 +491,7 @@ private fun Grade(
                 }
                 for (b in blocos) {
                     val col = if (movel) { if (b.dia != diaMovel) continue else 0 } else b.dia
-                    BlocoView(b, b.id == selecionado, !travado, larguraCol, alturaMeia, larguraHora + larguraCol * col, cabecalho + alturaMeia * ((b.ini - INICIO) / PASSO), pxMeia, pxCol, movel,
+                    BlocoView(b, b.id == selecionado, !travado, larguraCol, alturaMeia, larguraHora + larguraCol * col, cabecalho + alturaMeia * ((b.ini - INICIO) / PASSO.toFloat()), pxMeia, pxCol, movel,
                         aoTocarBloco, aoMover, aoEsticar, aoManipular = { manipulando = it })
                 }
                 // linha da hora atual, acima dos blocos
@@ -525,9 +525,9 @@ private fun BlocoView(
     val iniVis = (b.ini + dMin + dIni).coerceIn(INICIO, b.fim - PASSO)
     val fimVis = (b.fim + dMin + dFim).coerceIn(iniVis + PASSO, FIM)
     val offX = with(LocalDensity.current) { (x + larguraCol * dCol).roundToPx() }
-    val offY = with(LocalDensity.current) { (y + alturaMeia * ((iniVis - b.ini) / PASSO)).roundToPx() }
+    val offY = with(LocalDensity.current) { (y + alturaMeia * ((iniVis - b.ini) / PASSO.toFloat())).roundToPx() }
     val fimGesto = { manipulando = false; aoManipular(false) }
-    Box(modifier = Modifier.offset { IntOffset(offX, offY) }.width(larguraCol).height(alturaMeia * ((fimVis - iniVis) / PASSO)).padding(horizontal = 2.dp, vertical = 1.dp)) {
+    Box(modifier = Modifier.offset { IntOffset(offX, offY) }.width(larguraCol).height(alturaMeia * ((fimVis - iniVis) / PASSO.toFloat())).padding(horizontal = 2.dp, vertical = 1.dp)) {
         Box(modifier = Modifier.fillMaxSize()
             .then(if (sel) Modifier.border(2.dp, Acento, RoundedCornerShape(8.dp)).padding(1.dp).border(1.dp, Fundo, RoundedCornerShape(7.dp)).padding(1.dp) else Modifier)
             .clip(RoundedCornerShape(if (sel) 6.dp else 8.dp)).background(b.cat.cor)
