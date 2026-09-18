@@ -43,9 +43,21 @@ data class Bloco(
     val cat: Categoria,
     val rot: String,
     val unico: Boolean,
+    /** "notif:10" = notificação 10 min antes; "alarme:0" = alarme na hora; null = nenhum. Fica no evento do Google. */
+    val lembrete: String? = null,
 ) {
     val dia: Int get() = data.dayOfWeek.value - 1   // segunda = 0
     val duracao: Int get() = fim - ini
+}
+
+/** Lembrete decomposto: modo (nenhum|notif|alarme) e antecedência em minutos. */
+data class Lembrete(val modo: String, val minutos: Int) {
+    val chave: String? get() = if (modo == "nenhum") null else "$modo:$minutos"
+    val rotulo: String get() = when (modo) { "notif" -> if (minutos == 0) "Notificação na hora" else "Notificação $minutos min antes"; "alarme" -> if (minutos == 0) "Alarme na hora" else "Alarme $minutos min antes"; else -> "Sem lembrete" }
+    companion object {
+        val NENHUM = Lembrete("nenhum", 0)
+        fun de(chave: String?): Lembrete { val p = chave?.split(":") ?: return NENHUM; return if (p.size == 2 && p[0] in listOf("notif", "alarme")) Lembrete(p[0], p[1].toIntOrNull() ?: 0) else NENHUM }
+    }
 }
 
 const val INICIO = 5 * 60

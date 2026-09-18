@@ -68,7 +68,7 @@ class GoogleAgenda(private val contexto: Context, conta: String) {
         val serie = e.recurringEventId
         val original = e.originalStartTime?.dateTime?.value
         val unico = serie == null || priv["excecao"] == "1" || (original != null && original != ini.value)
-        return Bloco(e.id, serie, data, mIni.coerceAtLeast(INICIO), mFim, cat, e.summary ?: "(sem nome)", unico)
+        return Bloco(e.id, serie, data, mIni.coerceAtLeast(INICIO), mFim, cat, e.summary ?: "(sem nome)", unico, priv["lembrete"]?.ifEmpty { null })
     }
 
     private fun quando(data: LocalDate, minutos: Int): EventDateTime {
@@ -76,46 +76,47 @@ class GoogleAgenda(private val contexto: Context, conta: String) {
         return EventDateTime().setDateTime(DateTime(z.toInstant().toEpochMilli())).setTimeZone(fuso.id)
     }
 
-    private fun corpo(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, rotina: Boolean, excecao: Boolean = false): Event {
-        val props = mutableMapOf("cat" to cat.chave, "app" to "agenda-semanal")
+    private fun corpo(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, rotina: Boolean, excecao: Boolean = false, lembrete: String? = null): Event {
+        val props = mutableMapOf("cat" to cat.chave, "app" to "agenda-semanal", "lembrete" to (lembrete ?: ""))   // "" apaga o lembrete no Google
         if (rotina) props["rotina"] = "1"
         if (excecao) props["excecao"] = "1"
         return Event().setSummary(rot).setColorId(cat.colorId).setStart(quando(data, ini)).setEnd(quando(data, fim))
             .setExtendedProperties(Event.ExtendedProperties().setPrivate(props))
+            .setReminders(Event.Reminders().setUseDefault(false).setOverrides(emptyList()))   // quem avisa é o app; evita aviso duplicado do Google
     }
 
     /** Cria um bloco da rotina: série semanal começando na data dada. */
-    fun criarSerie(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int): String {
-        val e = corpo(rot, cat, data, ini, fim, rotina = true).setRecurrence(listOf("RRULE:FREQ=WEEKLY"))
+    fun criarSerie(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, lembrete: String? = null): String {
+        val e = corpo(rot, cat, data, ini, fim, rotina = true, lembrete = lembrete).setRecurrence(listOf("RRULE:FREQ=WEEKLY"))
         return api.events().insert(calendarioId(), e).execute().id
     }
 
     /** Cria um bloco só de uma data (evento avulso). */
-    fun criarUnico(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int): String =
-        api.events().insert(calendarioId(), corpo(rot, cat, data, ini, fim, rotina = false)).execute().id
+    fun criarUnico(rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, lembrete: String? = null): String =
+        api.events().insert(calendarioId(), corpo(rot, cat, data, ini, fim, rotina = false, lembrete = lembrete)).execute().id
 
     /**
      * Altera a série inteira (todas as semanas). Move a série para o dia da semana e horário novos
      * mantendo a data de início da série na mesma semana em que ela começou.
      */
-    fun alterarSerie(serie: String, rot: String, cat: Categoria, dia: Int, ini: Int, fim: Int) {
+    fun alterarSerie(serie: String, rot: String, cat: Categoria, dia: Int, ini: Int, fim: Int, lembrete: String? = null) {
         val cal = calendarioId()
         val mestre = api.events().get(cal, serie).execute()
         val inicioAtual = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(mestre.start.dateTime.value), fuso).toLocalDate()
         val segundaDaSerie = inicioAtual.minusDays((inicioAtual.dayOfWeek.value - 1).toLong())
         val novaData = segundaDaSerie.plusDays(dia.toLong())
-        val e = corpo(rot, cat, novaData, ini, fim, rotina = true).setRecurrence(mestre.recurrence ?: listOf("RRULE:FREQ=WEEKLY"))
+        val e = corpo(rot, cat, novaData, ini, fim, rotina = true, lembrete = lembrete).setRecurrence(mestre.recurrence ?: listOf("RRULE:FREQ=WEEKLY"))
         api.events().patch(cal, serie, e).execute()
     }
 
     /** Altera só a ocorrência (exceção da série naquela data). Pode mudar de dia dentro da mesma semana. */
-    fun alterarOcorrencia(id: String, rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int) {
-        api.events().patch(calendarioId(), id, corpo(rot, cat, data, ini, fim, rotina = false, excecao = true)).execute()
+    fun alterarOcorrencia(id: String, rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, lembrete: String? = null) {
+        api.events().patch(calendarioId(), id, corpo(rot, cat, data, ini, fim, rotina = false, excecao = true, lembrete = lembrete)).execute()
     }
 
     /** Altera um evento avulso. */
-    fun alterarUnico(id: String, rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int) {
-        api.events().patch(calendarioId(), id, corpo(rot, cat, data, ini, fim, rotina = false)).execute()
+    fun alterarUnico(id: String, rot: String, cat: Categoria, data: LocalDate, ini: Int, fim: Int, lembrete: String? = null) {
+        api.events().patch(calendarioId(), id, corpo(rot, cat, data, ini, fim, rotina = false, lembrete = lembrete)).execute()
     }
 
     /** Remove: a série inteira, ou só a ocorrência (vira exceção cancelada), ou o avulso. */
@@ -136,7 +137,7 @@ class GoogleAgenda(private val contexto: Context, conta: String) {
         val cat = Categoria.por(priv["cat"])
         // a ocorrência original é a do mesmo dia da semana na semana em tela
         val dataOriginal = bloco.data.minusDays(bloco.dia.toLong()).plusDays((zIni.dayOfWeek.value - 1).toLong())
-        val e = corpo(mestre.summary ?: "", cat, dataOriginal, ini, fim, rotina = false).setStatus("confirmed")
+        val e = corpo(mestre.summary ?: "", cat, dataOriginal, ini, fim, rotina = false, lembrete = priv["lembrete"]?.ifEmpty { null }).setStatus("confirmed")
         api.events().patch(cal, bloco.id, e).execute()
     }
 

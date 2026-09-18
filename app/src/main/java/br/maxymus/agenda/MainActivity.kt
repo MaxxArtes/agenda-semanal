@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import com.google.android.gms.common.api.Scope
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Lembretes.canais(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF6C8CFF), secondary = Color(0xFF4CC486), background = Color(0xFF0F1420), surface = Color(0xFF171D2C))) {
                 App()
@@ -69,5 +71,6 @@ private fun App() {
         }
         return
     }
-    AgendaScreen(conta = email, sair = { cliente.signOut(); GoogleAgenda(contexto, email).esqueceCalendario(); conta = null }, autorizar = { intent: Intent -> entrar.launch(intent) })
+    LaunchedEffect(email) { Lembretes.guardaConta(contexto, email) }
+    AgendaScreen(conta = email, sair = { cliente.signOut(); GoogleAgenda(contexto, email).esqueceCalendario(); Lembretes.guardaConta(contexto, null); conta = null }, autorizar = { intent: Intent -> entrar.launch(intent) })
 }

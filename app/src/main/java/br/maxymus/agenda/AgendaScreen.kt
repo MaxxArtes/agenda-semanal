@@ -75,6 +75,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -107,7 +111,7 @@ private val fmtCurta: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", L
 private sealed class Pendente { data class Mover(val b: Bloco, val dia: Int, val ini: Int) : Pendente(); data class Esticar(val b: Bloco, val ini: Int, val fim: Int) : Pendente(); data class Colar(val c: Bloco, val dia: Int, val ini: Int) : Pendente(); data class Duplicar(val s: Bloco) : Pendente() }
 
 /** Dados que o editor manipula; `base` nulo = bloco novo. */
-private data class Edicao(val base: Bloco?, val dia: Int, val ini: Int, val fim: Int, val cat: Categoria, val rot: String)
+private data class Edicao(val base: Bloco?, val dia: Int, val ini: Int, val fim: Int, val cat: Categoria, val rot: String, val lembrete: String? = null)
 
 /** Estado da comunicação com o Google, separado por tipo (Astra P0). */
 private sealed class Rede { object Ocioso : Rede(); data class Carregando(val texto: String) : Rede(); data class Erro(val texto: String, val autorizar: Intent? = null) : Rede() }
@@ -159,6 +163,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
             try {
                 val lidos = withContext(Dispatchers.IO) { repo.semana(seg) }
                 blocos = lidos; carregou = true; ultimaLeitura = System.currentTimeMillis(); precisaReler = false
+                Lembretes.agendar(contexto, lidos)
                 if (rede is Rede.Carregando) rede = Rede.Ocioso
             } catch (e: UserRecoverableAuthIOException) { rede = Rede.Erro("Precisa autorizar o acesso ao Google Agenda.", e.intent) }
             catch (e: Exception) { if (!silencioso || !carregou) rede = Rede.Erro("Não foi possível carregar: " + GoogleAgenda.mensagem(e)) }
@@ -178,29 +183,32 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(60_000); val h = LocalDate.now(FUSO); if (h != hoje) hoje = h } }
 
     // ---- mudanças com alcance ----
-    fun aplicar(b: Bloco, dia: Int, ini: Int, fim: Int, cat: Categoria = b.cat, rot: String = b.rot, escopoMudanca: String) {
+    fun aplicar(b: Bloco, dia: Int, ini: Int, fim: Int, cat: Categoria = b.cat, rot: String = b.rot, escopoMudanca: String, lembrete: String? = b.lembrete) {
         val data = dataDe(dia)
         val soDia = b.serie != null && (b.unico || escopoMudanca == "dia")
-        blocos = blocos.map { if (it.id == b.id) it.copy(data = data, ini = ini, fim = fim, cat = cat, rot = rot, unico = it.unico || soDia) else it }
+        blocos = blocos.map { if (it.id == b.id) it.copy(data = data, ini = ini, fim = fim, cat = cat, rot = rot, unico = it.unico || soDia, lembrete = lembrete) else it }
+        Lembretes.agendar(contexto, blocos)
         Fila.enfileirar("alterar $rot") {
             when {
-                b.serie == null -> repo.alterarUnico(Ids.real(b.id), rot, cat, data, ini, fim)
-                soDia -> repo.alterarOcorrencia(Ids.real(b.id), rot, cat, data, ini, fim)
-                else -> repo.alterarSerie(Ids.real(b.serie), rot, cat, dia, ini, fim)
+                b.serie == null -> repo.alterarUnico(Ids.real(b.id), rot, cat, data, ini, fim, lembrete)
+                soDia -> repo.alterarOcorrencia(Ids.real(b.id), rot, cat, data, ini, fim, lembrete)
+                else -> repo.alterarSerie(Ids.real(b.serie), rot, cat, dia, ini, fim, lembrete)
             }
         }
         if (b.serie != null && !soDia) precisaReler = true   // a série mudou: as ocorrências da semana precisam vir do Google
     }
-    fun criar(dia: Int, ini: Int, fim: Int, cat: Categoria, rot: String, escopoMudanca: String) {
+    fun criar(dia: Int, ini: Int, fim: Int, cat: Categoria, rot: String, escopoMudanca: String, lembrete: String? = null) {
         val data = dataDe(dia); val tmp = Ids.temporario(); val rotina = escopoMudanca != "dia"
-        blocos = blocos + Bloco(tmp, if (rotina) tmp else null, data, ini, fim, cat, rot, unico = !rotina)
-        Fila.enfileirar("criar $rot") { val real = if (rotina) repo.criarSerie(rot, cat, data, ini, fim) else repo.criarUnico(rot, cat, data, ini, fim); Ids.registra(tmp, real) }
+        blocos = blocos + Bloco(tmp, if (rotina) tmp else null, data, ini, fim, cat, rot, unico = !rotina, lembrete = lembrete)
+        Lembretes.agendar(contexto, blocos)
+        Fila.enfileirar("criar $rot") { val real = if (rotina) repo.criarSerie(rot, cat, data, ini, fim, lembrete) else repo.criarUnico(rot, cat, data, ini, fim, lembrete); Ids.registra(tmp, real) }
         if (rotina) precisaReler = true   // a ocorrência de verdade tem id próprio, diferente do id da série
     }
     fun remover(b: Bloco, escopoMudanca: String) {
         selecionado = null
         val serieInteira = b.serie != null && !b.unico && escopoMudanca == "semana"
         blocos = if (serieInteira) blocos.filter { it.serie != b.serie } else blocos.filter { it.id != b.id }
+        Lembretes.agendar(contexto, blocos)
         Fila.enfileirar("remover ${b.rot}") { if (serieInteira) repo.remover(Ids.real(b.serie!!)) else repo.remover(Ids.real(b.id)) }
     }
 
@@ -281,7 +289,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         else -> edicao = Edicao(null, dia, m, (m + 60).coerceAtMost(FIM), Categoria.OUTRO, "")
                     }
                 },
-                aoTocarBloco = { b -> if (selecionado == b.id) edicao = Edicao(b, b.dia, b.ini, b.fim, b.cat, b.rot) else selecionado = b.id },
+                aoTocarBloco = { b -> if (selecionado == b.id) edicao = Edicao(b, b.dia, b.ini, b.fim, b.cat, b.rot, b.lembrete) else selecionado = b.id },
                 aoMover = { b, dia, ini -> if (ehRotina(b)) pendente = Pendente.Mover(b, dia, ini) else aplicar(b, dia, ini, ini + b.duracao, escopoMudanca = "dia") },
                 aoEsticar = { b, ini, fim -> if (ehRotina(b)) pendente = Pendente.Esticar(b, ini, fim) else aplicar(b, b.dia, ini, fim, escopoMudanca = "dia") },
                 aoDeslizar = { sentido -> if (selecionado == null) diaMovel = (diaMovel + sentido).coerceIn(0, 6) },
@@ -299,11 +307,15 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                 s != null -> {
                     Text("${s.rot} · ${hhmm(s.ini)}–${hhmm(s.fim)}", color = Tinta, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(if (ehRotina(s)) "Rotina semanal · Alcance definido ao aplicar" else "Mudanças: só ${s.data.format(fmtCurta)}", color = Tinta2, fontSize = 12.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(Lembrete.de(s.lembrete).let { if (it.modo == "nenhum") "Sem lembrete" else it.rotulo }, color = Tinta2, fontSize = 12.sp)
+                        TextButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot, s.lembrete) }, modifier = Modifier.height(48.dp)) { Text(if (s.lembrete == null) "Adicionar" else "Trocar", color = Acento, fontSize = 12.sp) }
+                    }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 4.dp)) {
                         Button(onClick = { copiado = s; selecionado = null }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Copiar") }
                         val cabe = s.fim + s.duracao <= FIM
                         OutlinedButton(onClick = { pendente = Pendente.Duplicar(s) }, enabled = cabe && !ocupado, modifier = Modifier.height(48.dp)) { Text(if (cabe) "Duplicar" else "Duplicar (não cabe)") }
-                        OutlinedButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot) }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Editar") }
+                        OutlinedButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot, s.lembrete) }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Editar") }
                         if (escala == 0f || escala < 0.999f) OutlinedButton(onClick = { guardaEscala(1f); pedirAmpliar = s }, modifier = Modifier.height(48.dp)) { Text("Ampliar para ajustar") }
                         if (s.unico && s.serie != null) OutlinedButton(onClick = { selecionado = null; precisaReler = true; Fila.enfileirar("voltar ${s.rot} à rotina") { repo.voltarRotina(s.copy(id = Ids.real(s.id), serie = Ids.real(s.serie!!))) } }, modifier = Modifier.height(48.dp)) { Text("Voltar à rotina") }
                         OutlinedButton(onClick = { selecionado = null }, modifier = Modifier.height(48.dp)) { Text("Desmarcar") }
@@ -370,6 +382,8 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         var escopoMudanca by remember(ed) { mutableStateOf("dia") }
         var erroNome by remember(ed) { mutableStateOf<String?>(null) }
         var erroHora by remember(ed) { mutableStateOf<String?>(null) }
+        var lembrete by remember(ed) { mutableStateOf(Lembrete.de(ed.lembrete)) }
+        val pedirNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
         var confirmaRemover by remember(ed) { mutableStateOf(false) }
         val folha = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(onDismissRequest = { edicao = null }, sheetState = folha, containerColor = Elevada, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
@@ -386,6 +400,19 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         Box(Modifier.weight(1f)) { Seletor("Fim", hhmm(fim), fins.map { hhmm(it) }) { fim = fins[it]; erroHora = null } }
                     }
                     Text(if (fim > ini) "Duração: ${duracao(fim - ini)}" else (erroHora ?: "O fim precisa ser depois do início."), color = if (fim > ini) Tinta2 else Perigo, fontSize = 12.sp)
+                    Column {
+                        Text("Lembrete", color = Tinta2, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+                        Segmentado(listOf("nenhum" to "Nenhum", "notif" to "Notificação", "alarme" to "Alarme"), lembrete.modo) { m -> lembrete = if (m == "nenhum") Lembrete.NENHUM else Lembrete(m, if (lembrete.modo == "nenhum") 10 else lembrete.minutos.let { if (m == "alarme" && it !in listOf(0, 5, 10, 30)) 10 else it }) }
+                        if (lembrete.modo != "nenhum") {
+                            val opcoes = if (lembrete.modo == "alarme") listOf(0, 5, 10, 30) else listOf(0, 5, 10, 15, 30, 60)
+                            fun rot(m: Int) = when (m) { 0 -> "No horário"; 60 -> "1 h antes"; else -> "$m min antes" }
+                            Box(Modifier.padding(top = 8.dp)) { Seletor("Quando", rot(lembrete.minutos), opcoes.map { rot(it) }) { lembrete = lembrete.copy(minutos = opcoes[it]) } }
+                            Text(if (lembrete.modo == "alarme") "Toca som de despertador neste aparelho." else "Avisa neste aparelho.", color = Tinta2, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                            if (!Lembretes.exatoPermitido(contexto)) Text("O lembrete pode atrasar: alarme exato não permitido. Permitir em Configurações.", color = Perigo, fontSize = 12.sp)
+                            if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(contexto, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                                Text("Permita notificações para receber os lembretes que você escolher.", color = Tinta2, fontSize = 12.sp)
+                        }
+                    }
                     if (ed.base?.unico == true) Text("Vale só para ${ed.base.data.format(fmtData)}.", color = Tinta2, fontSize = 12.sp)
                     else Column {
                         Text("Vale para", color = Tinta2, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
@@ -408,7 +435,8 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         if (rot.isBlank()) { erroNome = "Dê um nome ao compromisso."; return@Button }
                         if (fim <= ini) { erroHora = "O fim precisa ser depois do início."; return@Button }
                         val b = ed.base
-                        if (b == null) criar(dia, ini, fim, cat, rot.trim(), escopoMudanca) else aplicar(b, dia, ini, fim, cat, rot.trim(), escopoMudanca)
+                        if (lembrete.modo != "nenhum" && android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(contexto, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) pedirNotif.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        if (b == null) criar(dia, ini, fim, cat, rot.trim(), escopoMudanca, lembrete.chave) else aplicar(b, dia, ini, fim, cat, rot.trim(), escopoMudanca, lembrete.chave)
                         edicao = null
                     }, modifier = Modifier.height(48.dp)) { Text("Salvar") }
                 }
@@ -621,9 +649,10 @@ private fun BlocoView(
                 alturaBloco < 44.dp -> Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                 alturaBloco < 64.dp -> Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    IconeLembrete(b)
                     Text("${hhmm(iniVis)}–${hhmm(fimVis)}", color = b.cat.texto, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 6.dp)) }
                 else -> Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) { Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)); IconeLembrete(b) }
                     Text("${hhmm(iniVis)}–${hhmm(fimVis)}", color = b.cat.texto, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1)
                 }
             }
@@ -641,4 +670,11 @@ private fun BlocoView(
                 contentAlignment = Alignment.Center) { Box(Modifier.width(24.dp).height(6.dp).clip(RoundedCornerShape(3.dp)).background(Acento)) }
         }
     }
+}
+
+@Composable
+private fun IconeLembrete(b: Bloco) {
+    val l = Lembrete.de(b.lembrete)
+    if (l.modo == "nenhum") return
+    Icon(if (l.modo == "alarme") Icons.Filled.Alarm else Icons.Filled.Notifications, contentDescription = l.rotulo, tint = b.cat.texto, modifier = Modifier.padding(start = 4.dp).size(16.dp))
 }
