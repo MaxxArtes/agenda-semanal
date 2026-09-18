@@ -63,3 +63,13 @@ Certificado do APK da Play igual ao instalado; atualização sobre a 0.13 manten
 login e escrita no Google Agenda no artefato da Play; alarme em tela bloqueada após atualização e reinício;
 segunda release instalada sem abrir a loja; comportamento real do Play Protect registrado; CI com assinatura
 correta e versões crescentes, canal APK nunca acima da Play.
+
+## Decisão do dono (18/09): sem gasto com a Play agora. Plano B em execução: Obtainium
+Repo público, uma release por build com o APK anexo (tag vX.Y-buildN, "ultimo" é pré-release e fica de fora).
+O Obtainium acompanha https://github.com/MaxxArtes/agenda-semanal e compara a tag com a versão instalada.
+Condições para instalar em silêncio (wiki do Obtainium): Android 12+, a versão atual do app instalada PELO
+Obtainium (uma instalação manual, a última com toque), atualizações em segundo plano ligadas nas configurações
+do Obtainium. Play Protect pode avisar nessa primeira instalação; nas seguintes, medir.
+Passos do dono: instalar Obtainium (github.com/ImranR98/Obtainium/releases, APK) > Adicionar app > colar a URL do
+repo > Instalar a 0.14 por ele > Configurações > ligar atualizações em segundo plano. Prova: quando sair a 0.15,
+ela tem que chegar sem toque.
