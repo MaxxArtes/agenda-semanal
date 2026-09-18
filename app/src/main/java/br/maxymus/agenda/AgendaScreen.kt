@@ -12,6 +12,10 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -133,6 +137,11 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
     LaunchedEffect(Unit) { val v = Atualizador.consultar(); if (v != null && v.codigo > instalada.second) novaVersao = v }
     val movel = LocalConfiguration.current.screenWidthDp < 600
     val ocupado = false
+    // escala vertical da grade (Astra, DESIGN_ASTRA_PINCA.md): 1 = padrão, 0 = "dia inteiro" (recalculado pela janela); guardada por apresentação
+    val chaveEscala = if (movel) "escala_celular" else "escala_tablet"
+    var escala by remember { mutableStateOf(contexto.getSharedPreferences("agenda", android.content.Context.MODE_PRIVATE).getFloat(chaveEscala, 1f)) }
+    fun guardaEscala(v: Float) { escala = v; contexto.getSharedPreferences("agenda", android.content.Context.MODE_PRIVATE).edit().putFloat(chaveEscala, v).apply() }
+    var pedirAmpliar by remember { mutableStateOf<Bloco?>(null) }
     fun sel() = blocos.firstOrNull { it.id == selecionado }
     fun dataDe(dia: Int): LocalDate = seg.plusDays(dia.toLong())
     fun ehRotina(b: Bloco) = b.serie != null && !b.unico
@@ -199,6 +208,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         // ---- cabeçalho: título + menu ----
         Row(modifier = Modifier.fillMaxWidth().height(48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Agenda Semanal", color = Tinta, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(onClick = { guardaEscala(if (escala == 0f) 1f else 0f) }, modifier = Modifier.height(48.dp)) { Text(if (escala == 0f) "Padrão" else "Dia inteiro", color = Acento) }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções", tint = Tinta2) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -261,6 +271,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             Grade(
                 blocos = blocos, seg = seg, hoje = hoje, movel = movel, diaMovel = diaMovel, selecionado = selecionado, travado = ocupado,
+                escalaPref = escala, aoMudarEscala = { guardaEscala(it) }, ampliarPara = pedirAmpliar, aoAmpliou = { pedirAmpliar = null },
                 aoTocarVazio = { dia, m ->
                     val c = copiado
                     when {
@@ -293,6 +304,7 @@ fun AgendaScreen(conta: String, sair: () -> Unit, autorizar: (Intent) -> Unit) {
                         val cabe = s.fim + s.duracao <= FIM
                         OutlinedButton(onClick = { pendente = Pendente.Duplicar(s) }, enabled = cabe && !ocupado, modifier = Modifier.height(48.dp)) { Text(if (cabe) "Duplicar" else "Duplicar (não cabe)") }
                         OutlinedButton(onClick = { edicao = Edicao(s, s.dia, s.ini, s.fim, s.cat, s.rot) }, enabled = !ocupado, modifier = Modifier.height(48.dp)) { Text("Editar") }
+                        if (escala == 0f || escala < 0.999f) OutlinedButton(onClick = { guardaEscala(1f); pedirAmpliar = s }, modifier = Modifier.height(48.dp)) { Text("Ampliar para ajustar") }
                         if (s.unico && s.serie != null) OutlinedButton(onClick = { selecionado = null; precisaReler = true; Fila.enfileirar("voltar ${s.rot} à rotina") { repo.voltarRotina(s.copy(id = Ids.real(s.id), serie = Ids.real(s.serie!!))) } }, modifier = Modifier.height(48.dp)) { Text("Voltar à rotina") }
                         OutlinedButton(onClick = { selecionado = null }, modifier = Modifier.height(48.dp)) { Text("Desmarcar") }
                     }
@@ -462,23 +474,34 @@ private fun SeletorCategoria(atual: Categoria, aoEscolher: (Categoria) -> Unit) 
 @Composable
 private fun Grade(
     blocos: List<Bloco>, seg: LocalDate, hoje: LocalDate, movel: Boolean, diaMovel: Int, selecionado: String?, travado: Boolean,
+    escalaPref: Float, aoMudarEscala: (Float) -> Unit, ampliarPara: Bloco?, aoAmpliou: () -> Unit,
     aoTocarVazio: (Int, Int) -> Unit, aoTocarBloco: (Bloco) -> Unit,
     aoMover: (Bloco, Int, Int) -> Unit, aoEsticar: (Bloco, Int, Int) -> Unit, aoDeslizar: (Int) -> Unit,
 ) {
-    val alturaMeia: Dp = if (movel) 64.dp else 72.dp
+    val basePadrao: Dp = if (movel) 64.dp else 72.dp
     val larguraHora: Dp = 48.dp
     val cabecalho: Dp = if (movel) 0.dp else 48.dp
     val linhas = (FIM - INICIO) / PASSO
-    val alturaTotal = alturaMeia * linhas + cabecalho
     val densidade = LocalDensity.current
     val rolagem = rememberScrollState()
     var manipulando by remember { mutableStateOf(false) }
+    var escalaLocal by remember { mutableStateOf(if (escalaPref == 0f) 0.25f else escalaPref) }   // valor efetivo durante a pinça
     // primeira abertura no dia de hoje: uma hora antes de agora
     LaunchedEffect(Unit) {
         val agora = LocalTime.now(FUSO); val m = agora.hour * 60 + agora.minute
-        if (m > INICIO + 60) rolagem.scrollTo(with(densidade) { (alturaMeia * ((m - 60 - INICIO) / PASSO)).roundToPx() })
+        if (m > INICIO + 60) rolagem.scrollTo(with(densidade) { (basePadrao * (if (escalaPref == 0f) 0.25f else escalaPref) * ((m - 60 - INICIO) / PASSO)).roundToPx() })
     }
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Papel)) {
+        val escalaMin = ((maxHeight - cabecalho) / linhas / basePadrao).coerceIn(0.12f, 1f)   // dia inteiro visível
+        val escalaMax = 2f
+        val escala = if (escalaPref == 0f) escalaMin else escalaLocal.coerceIn(escalaMin, escalaMax)
+        val alturaMeia: Dp = basePadrao * escala
+        val alturaTotal = alturaMeia * linhas + cabecalho
+        val padrao = escala >= 0.999f   // alças e toque longo só na escala padrão ou maior
+        LaunchedEffect(ampliarPara, escala) {
+            val b = ampliarPara ?: return@LaunchedEffect
+            if (padrao) { rolagem.animateScrollTo(with(densidade) { (cabecalho + basePadrao * ((b.ini - INICIO) / PASSO.toFloat()) - 80.dp).roundToPx().coerceAtLeast(0) }); aoAmpliou() }
+        }
         val colunas = if (movel) 1 else 7
         val larguraCol: Dp = (maxWidth - larguraHora) / colunas
         val pxMeia = with(densidade) { alturaMeia.toPx() }
@@ -488,7 +511,32 @@ private fun Grade(
         fun diaDe(x: Float) = if (movel) diaMovel else ((x - pxHora) / pxCol).toInt().coerceIn(0, 6)
         fun minutoDe(y: Float) = (INICIO + ((y - pxTopo) / pxMeia).toInt().coerceIn(0, linhas - 1) * PASSO)
 
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rolagem, enabled = !manipulando)) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rolagem, enabled = !manipulando)
+            .pointerInput(escalaMin) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var pinca = false
+                    do {
+                        val ev = awaitPointerEvent()
+                        val dedos = ev.changes.count { it.pressed }
+                        if (dedos >= 2) {
+                            val z = ev.calculateZoom(); val centro = ev.calculateCentroid()
+                            if (!pinca) { pinca = true; manipulando = true }
+                            val nova = (escala * z).coerceIn(escalaMin, escalaMax)
+                            if (nova != escala) {
+                                // mantém a hora sob os dedos no mesmo lugar da tela
+                                val yConteudo = rolagem.value + centro.y
+                                val fator = nova / escala
+                                escalaLocal = nova
+                                val alvo = (yConteudo * fator - centro.y).roundToInt().coerceAtLeast(0)
+                                kotlinx.coroutines.runBlocking { rolagem.scrollTo(alvo) }
+                            }
+                            ev.changes.forEach { it.consume() }
+                        }
+                    } while (ev.changes.any { it.pressed })
+                    if (pinca) { manipulando = false; aoMudarEscala(if (escalaLocal <= escalaMin + 0.01f) 0f else escalaLocal) }
+                }
+            }) {
             Box(modifier = Modifier.fillMaxWidth().height(alturaTotal)
                 .pointerInput(movel, diaMovel, selecionado, travado) { detectTapGestures { p -> if (p.x > pxHora && p.y > pxTopo) aoTocarVazio(diaDe(p.x), minutoDe(p.y)) } }
                 .pointerInput(movel, selecionado) { if (movel && selecionado == null) { var dx = 0f; var dy = 0f
@@ -510,12 +558,13 @@ private fun Grade(
                         Text(data.format(fmtData), color = Tinta2, fontSize = 12.sp, maxLines = 1)
                     }
                 }
-                for (r in 0 until linhas step 2) {
+                val passoRotulo = if (alturaMeia < 20.dp) 4 else 2
+                for (r in 0 until linhas step passoRotulo) {
                     Text(hhmm(INICIO + r * PASSO), color = Tinta2, fontSize = 12.sp, modifier = Modifier.offset(x = 6.dp, y = cabecalho + alturaMeia * r + (if (r == 0) 2.dp else (-8).dp)))
                 }
                 for (b in blocos) {
                     val col = if (movel) { if (b.dia != diaMovel) continue else 0 } else b.dia
-                    BlocoView(b, b.id == selecionado, !travado, larguraCol, alturaMeia, larguraHora + larguraCol * col, cabecalho + alturaMeia * ((b.ini - INICIO) / PASSO.toFloat()), pxMeia, pxCol, movel,
+                    BlocoView(b, b.id == selecionado, !travado && padrao, larguraCol, alturaMeia, larguraHora + larguraCol * col, cabecalho + alturaMeia * ((b.ini - INICIO) / PASSO.toFloat()), pxMeia, pxCol, movel,
                         aoTocarBloco, aoMover, aoEsticar, aoManipular = { manipulando = it })
                 }
                 // linha da hora atual, acima dos blocos
@@ -566,9 +615,17 @@ private fun BlocoView(
                     onDragCancel = { arrasto = Offset.Zero; fimGesto() }) { change, drag -> change.consume(); arrasto += drag }
             } else Modifier),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${hhmm(iniVis)}–${hhmm(fimVis)}", color = b.cat.texto, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1)
+            val alturaBloco = alturaMeia * ((fimVis - iniVis) / PASSO.toFloat())
+            when {
+                alturaBloco < 24.dp -> {}   // só a cor (Astra: nada de fonte encolhida)
+                alturaBloco < 44.dp -> Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                alturaBloco < 64.dp -> Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("${hhmm(iniVis)}–${hhmm(fimVis)}", color = b.cat.texto, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 6.dp)) }
+                else -> Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text(b.rot + (if (b.unico) " •" else ""), color = b.cat.texto, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${hhmm(iniVis)}–${hhmm(fimVis)}", color = b.cat.texto, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1)
+                }
             }
         }
         if (manipulando) Box(modifier = Modifier.align(Alignment.TopCenter).offset(y = (-26).dp).clip(RoundedCornerShape(6.dp)).background(Elevada).padding(horizontal = 8.dp, vertical = 3.dp)) {
